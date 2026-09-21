@@ -38,6 +38,11 @@ jobs:
       - name: Configurar GitHub Pages
         id: pages
         uses: actions/configure-pages@v5
+        with:
+          # Si el repositorio todavía no tiene GitHub Pages habilitado
+          # (Settings → Pages → Source nunca configurado), esto lo crea
+          # automáticamente en vez de fallar con "Get Pages site failed".
+          enablement: true
 
       - name: Build (static export para GitHub Pages)
         # GITHUB_PAGES=true activa basePath/assetPrefix en next.config.mjs
