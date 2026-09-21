@@ -1,0 +1,61 @@
+name: Deploy a GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  # Permite además disparar el deploy a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+# Permisos mínimos necesarios para publicar en GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Evita que dos deploys corran en paralelo; si hay uno en curso y llega
+# un push nuevo, se cancela el anterior (no interrumpe un deploy ya
+# publicado, sólo builds en cola).
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Configurar GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build (static export para GitHub Pages)
+        # GITHUB_PAGES=true activa basePath/assetPrefix en next.config.mjs
+        # para que el sitio funcione en /jardin-primavera/.
+        run: GITHUB_PAGES=true npm run build
+
+      - name: Subir artefacto de Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

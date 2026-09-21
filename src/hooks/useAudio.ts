@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { withBasePath } from "@/lib/basePath";
 
 interface UseAudioOptions {
   src: string;
@@ -18,7 +19,7 @@ export function useAudio({ src, volume, enabled }: UseAudioOptions) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const audio = new Audio(src);
+    const audio = new Audio(withBasePath(src));
     audio.loop = true;
     audio.volume = 0;
     audio.preload = "none";

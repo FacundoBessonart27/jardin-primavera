@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "build:gh-pages": "GITHUB_PAGES=true next build",
+    "serve": "npx serve@latest out",
     "lint": "next lint"
   },
   "dependencies": {
