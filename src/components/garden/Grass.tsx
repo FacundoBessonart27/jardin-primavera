@@ -5,6 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
 import { sceneUniforms } from "@/lib/sceneUniforms";
+import { heightAt } from "@/lib/terrain";
 
 const BLADE_HEIGHT = 0.5;
 
@@ -94,7 +95,7 @@ export function Grass({ count, windStrength }: GrassProps) {
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius - 3;
 
-      dummy.position.set(x, 0, z);
+      dummy.position.set(x, heightAt(x, z), z);
       dummy.rotation.y = random() * Math.PI * 2;
       const s = 0.7 + random() * 0.8;
       dummy.scale.set(s, s * (0.7 + random() * 0.6), s);

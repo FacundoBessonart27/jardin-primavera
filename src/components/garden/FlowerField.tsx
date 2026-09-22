@@ -10,6 +10,8 @@ import { useExperienceStore } from "@/store/experienceStore";
 import { sceneUniforms } from "@/lib/sceneUniforms";
 import { clamp, easeOutBack } from "@/lib/easing";
 import { createSeededRandom } from "@/lib/random";
+import { heightAt } from "@/lib/terrain";
+import { registerFlowerMesh, unregisterFlowerMesh, trySelectPlacement } from "@/lib/flowerRegistry";
 
 interface SpeciesGroupProps {
   speciesId: string;
@@ -46,23 +48,33 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
     if (!mesh) return;
     const random = createSeededRandom(speciesId.length * 97 + placements.length);
 
+    // Cuanto mayor `colorVariance` tenga la especie, más se nota la
+    // diferencia de tono entre flores vecinas (más "natural", menos
+    // flores clonadas idénticas una al lado de la otra).
+    const variance = 0.08 + visual.colorVariance * 0.5;
+
     for (let i = 0; i < placements.length; i++) {
       const p = placements[i];
-      dummy.position.set(...p.position);
+      const [x, , z] = p.position;
+      dummy.position.set(x, heightAt(x, z), z);
       dummy.rotation.set(0, p.rotationY, 0);
       dummy.scale.setScalar(0.0001);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
-      const tint = 0.9 + random() * 0.2;
+      const brightness = 1 + (random() - 0.5) * variance;
+      const warmth = 1 + (random() - 0.5) * variance * 0.6;
       mesh.setColorAt(
         i,
-        new THREE.Color(tint, tint, tint * (0.97 + random() * 0.06))
+        new THREE.Color(brightness, brightness, brightness * warmth)
       );
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [placements, speciesId]);
+
+    registerFlowerMesh(mesh, placements);
+    return () => unregisterFlowerMesh(mesh);
+  }, [placements, speciesId, visual.colorVariance]);
 
   useFrame(() => {
     const mesh = meshRef.current;
@@ -98,9 +110,10 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
           ? 1 + Math.sin(sceneUniforms.windTime * 1.8) * 0.015
           : 1;
 
+      const groundY = heightAt(p.position[0], p.position[2]);
       dummy.position.set(
         p.position[0],
-        p.position[1] + (isSelected ? 0.06 : 0),
+        groundY + (isSelected ? 0.06 : 0),
         p.position[2]
       );
       dummy.rotation.set(windTilt, p.rotationY + windSway, windSway * 0.6);
@@ -111,7 +124,12 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
     mesh.instanceMatrix.needsUpdate = true;
   });
 
+  // Con el mouse bloqueado (modo caminar de escritorio), la selección
+  // pasa por la mira central (ver FirstPersonControls + flowerRegistry),
+  // no por la posición real -congelada- del cursor. En ese caso estos
+  // handlers de R3F se desactivan para no pelear con el raycast manual.
   const handlePointerOver = (e: ThreeEvent<PointerEvent>) => {
+    if (document.pointerLockElement) return;
     e.stopPropagation();
     if (e.instanceId === undefined) return;
     const placement = placements[e.instanceId];
@@ -120,22 +138,17 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
   };
 
   const handlePointerOut = (e: ThreeEvent<PointerEvent>) => {
+    if (document.pointerLockElement) return;
     e.stopPropagation();
     useExperienceStore.getState().setHovered(null);
     document.body.style.cursor = "auto";
   };
 
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
+    if (document.pointerLockElement) return;
     e.stopPropagation();
     if (e.instanceId === undefined) return;
-    const placement = placements[e.instanceId];
-    if (sceneUniforms.reveal < placement.revealThreshold + 0.15) return;
-    useExperienceStore.getState().selectFlower({
-      instanceId: placement.id,
-      speciesId: placement.speciesId,
-      isSpecial: placement.isSpecial,
-      position: placement.position,
-    });
+    trySelectPlacement(placements[e.instanceId]);
   };
 
   return (
