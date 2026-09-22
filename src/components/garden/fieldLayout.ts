@@ -17,6 +17,15 @@ export interface FlowerPlacement {
    * empieza a "crecer" durante la transición de entrada. */
   revealThreshold: number;
   windPhase: number;
+  /** Inclinación fija (no la del viento) para que cada planta se
+   * apoye en un ángulo levemente distinto, como en un jardín real. */
+  leanX: number;
+  leanZ: number;
+  /** 0 = capullo entreabierto, 1 = flor completamente abierta. Cada
+   * variante usa su propia geometría (ver flowerGeometryCache), así
+   * que las flores de una misma especie no se ven todas en el mismo
+   * estado de apertura. */
+  bloomVariant: 0 | 1;
 }
 
 const FIELD_SEED = 20260921;
@@ -137,6 +146,12 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
         Math.min(0.85, distanceFromStart * 0.7 + random() * 0.25)
       ),
       windPhase: random() * Math.PI * 2,
+      leanX: (random() - 0.5) * 0.16,
+      leanZ: (random() - 0.5) * 0.16,
+      // La mayoría de las flores se ven completamente abiertas; una
+      // minoría queda como capullo entreabierto para dar variedad de
+      // etapas dentro del mismo campo.
+      bloomVariant: random() < 0.22 ? 0 : 1,
     });
   }
 
@@ -151,6 +166,9 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
     isSpecial: true,
     revealThreshold: 0.55,
     windPhase: 1.2,
+    leanX: 0,
+    leanZ: 0,
+    bloomVariant: 1,
   });
 
   return placed;

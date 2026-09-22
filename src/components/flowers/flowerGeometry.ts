@@ -6,21 +6,34 @@ import { createSeededRandom } from "@/lib/random";
  * ============================================================
  *  GENERADOR PROCEDURAL DE FLORES
  * ============================================================
- * En vez de cargar modelos 3D externos (pesados y con problemas
- * de licencia), cada especie se construye combinando geometría
- * simple de Three.js: pétalos (mallas curvas paramétricas con
- * degradé de color propio), un centro esférico (o estambres, en
- * las especies que los tienen), un tallo y un par de hojas. El
- * resultado se combina en UNA sola geometría por especie, lo que
- * permite dibujar cientos de flores con muy pocos draw calls
- * usando InstancedMesh (ver FlowerField.tsx).
+ * Cada especie se construye combinando geometría de Three.js:
+ * pétalos curvos con degradé de color y sombreado horneados por
+ * vértice, estambres/pistilo opcionales, un centro con textura,
+ * un tallo con una leve curva natural y hojas de tamaño y color
+ * variables. Cada pétalo se genera individualmente (no se clona
+ * el mismo triángulo N veces) para que ninguna flor se vea como
+ * una copia exacta de la de al lado. Todo se combina en UNA sola
+ * geometría por especie + variante de apertura, lo que permite
+ * dibujar cientos de flores con muy pocos draw calls usando
+ * InstancedMesh (ver FlowerField.tsx).
  */
 
 interface MeshPart {
   geometry: THREE.BufferGeometry;
   /** Color plano de respaldo, usado si la geometría no trae su
-   * propio atributo de color (ver createPetalGeometry con degradé). */
+   * propio atributo de color (degradé o textura horneada). */
   color: THREE.Color;
+}
+
+interface PetalOptions {
+  /** Irregularidad del borde: pequeña variación de ancho por anillo. */
+  edgeNoise?: number;
+  /** Cuánto se curvan los bordes hacia adentro (efecto "cuenco"). */
+  cupAmount?: number;
+  /** Oscurecimiento sutil cerca de los bordes (simula nervaduras). */
+  edgeShade?: number;
+  /** Generador aleatorio determinístico para la irregularidad. */
+  random?: () => number;
 }
 
 function petalWidthProfile(shape: PetalShape, t: number): number {
@@ -65,27 +78,58 @@ function petalCurlProfile(shape: PetalShape, t: number): number {
   }
 }
 
+const CUP_AMOUNT: Record<PetalShape, number> = {
+  round: 0.24,
+  pointed: 0.17,
+  thin: 0.09,
+  trumpet: 0.32,
+  ruffled: 0.22,
+  cluster: 0.12,
+  fringed: 0.26,
+  dome: 0.2,
+};
+
+const EDGE_NOISE: Record<PetalShape, number> = {
+  round: 0.06,
+  pointed: 0.045,
+  thin: 0.03,
+  trumpet: 0.06,
+  ruffled: 0.05,
+  cluster: 0.03,
+  fringed: 0.07,
+  dome: 0.05,
+};
+
+const EDGE_SHADE = 0.32;
+
 /** Construye un único pétalo en espacio local: crece a lo largo de +X,
- * se curva hacia +Y y su ancho se extiende en Z. Si se pasan colores de
- * degradé, hornea un atributo de color por vértice que va de `colorBase`
- * (garganta del pétalo, más oscura/cálida) a `colorTip` (punta), para
- * que cada pétalo tenga volumen y no se vea como un plano de color
- * plano y artificial. */
+ * se curva hacia +Y (con un leve efecto "cuenco" hacia los bordes) y
+ * su ancho se extiende en Z. Hornea un degradé de color base→punta y
+ * un leve sombreado hacia los bordes (simula nervaduras/profundidad),
+ * y si se pasa `random`, agrega una irregularidad sutil en el borde
+ * para que no sea un contorno perfectamente liso. */
 function createPetalGeometry(
   shape: PetalShape,
   length: number,
   width: number,
   lengthSegments: number,
   widthSegments: number,
-  gradient?: { base: THREE.Color; tip: THREE.Color }
+  gradient?: { base: THREE.Color; tip: THREE.Color },
+  options: PetalOptions = {}
 ): THREE.BufferGeometry {
+  const { edgeNoise = 0, cupAmount = CUP_AMOUNT[shape], edgeShade = EDGE_SHADE, random } =
+    options;
+
   const positions: number[] = [];
   const colors: number[] | null = gradient ? [] : null;
   const indices: number[] = [];
 
   for (let i = 0; i <= lengthSegments; i++) {
     const t = i / lengthSegments;
-    const w = petalWidthProfile(shape, t) * width;
+    let w = petalWidthProfile(shape, t) * width;
+    if (edgeNoise > 0 && random) {
+      w *= 1 + (random() - 0.5) * 2 * edgeNoise * Math.min(1, t * 2.2);
+    }
     const curl = petalCurlProfile(shape, t) * length;
     const x = t * length;
 
@@ -97,9 +141,13 @@ function createPetalGeometry(
     for (let j = 0; j <= widthSegments; j++) {
       const s = j / widthSegments - 0.5;
       const z = s * w;
-      const y = curl - Math.abs(s) * w * 0.18;
+      const y = curl - Math.abs(s) * w * cupAmount;
       positions.push(x, y, z);
-      if (colors && ringColor) colors.push(ringColor.r, ringColor.g, ringColor.b);
+
+      if (colors && ringColor) {
+        const shade = 1 - edgeShade * Math.pow(Math.min(1, Math.abs(s) * 2), 1.4);
+        colors.push(ringColor.r * shade, ringColor.g * shade, ringColor.b * shade);
+      }
     }
   }
 
@@ -135,9 +183,58 @@ function transformedClone(
   return clone;
 }
 
+/** Da una leve curva natural al tallo (no es un cilindro perfectamente
+ * recto "clavado" en el suelo), doblándolo progresivamente hacia la
+ * punta en una dirección aleatoria por flor. */
+function bendStemGeometry(
+  geometry: THREE.BufferGeometry,
+  height: number,
+  bendAmount: number,
+  dirX: number,
+  dirZ: number
+) {
+  const pos = geometry.getAttribute("position");
+  for (let i = 0; i < pos.count; i++) {
+    const t = THREE.MathUtils.clamp(pos.getY(i) / height, 0, 1);
+    const bend = Math.pow(t, 1.7) * bendAmount;
+    pos.setX(i, pos.getX(i) + dirX * bend);
+    pos.setZ(i, pos.getZ(i) + dirZ * bend);
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+}
+
+/** Pinta una geometría (típicamente el centro de la flor) con una
+ * textura sutil de variación de color por vértice: ni un amarillo
+ * plano ni ruido evidente, sólo un leve moteado orgánico. */
+function applyCenterTexture(
+  geometry: THREE.BufferGeometry,
+  baseColor: THREE.Color,
+  amount: number,
+  random: () => number
+) {
+  const pos = geometry.getAttribute("position");
+  const darker = baseColor.clone().multiplyScalar(0.7);
+  const lighter = baseColor.clone().lerp(new THREE.Color("#ffffff"), 0.22);
+  const colors = new Float32Array(pos.count * 3);
+
+  for (let i = 0; i < pos.count; i++) {
+    const n = random();
+    const c =
+      n < 0.5
+        ? baseColor.clone().lerp(darker, (0.5 - n) * 1.7 * amount)
+        : baseColor.clone().lerp(lighter, (n - 0.5) * 1.3 * amount);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+}
+
 /** Combina varias geometrías en una sola. Si una parte trae su propio
- * atributo de color (degradé de pétalo), se respeta tal cual; si no,
- * se rellena con el color plano de esa parte (tallo, centro, etc). */
+ * atributo de color (degradé/textura horneada), se respeta tal cual;
+ * si no, se rellena con el color plano de esa parte (tallo, etc). */
 function mergeParts(parts: MeshPart[]): THREE.BufferGeometry {
   let vertexCount = 0;
   const nonIndexed = parts.map((part) => {
@@ -218,6 +315,8 @@ const BASE_WIDTH_RATIO: Record<PetalShape, number> = {
 
 interface BuildOptions {
   detail: "field" | "showcase";
+  /** 0 = capullo entreabierto, 1 = flor completamente abierta. */
+  bloom?: number;
 }
 
 /** Matriz para colocar un pétalo: base desplazada `attachRadius` desde el
@@ -256,12 +355,17 @@ function buildDiscHead(
   random: () => number,
   headY: number,
   segments: { length: number; width: number },
-  parts: MeshPart[]
+  parts: MeshPart[],
+  bloom: number
 ) {
   const { petalShape, petalCount, layers, scale } = visual;
-  const openAngle = OPEN_ANGLE[petalShape];
-  const baseLength = BASE_LENGTH[petalShape] * scale;
+  // bloom 0 (capullo) → pétalos más erguidos y cortos; bloom 1 (abierta)
+  // → pétalos más extendidos, como una flor recién abierta.
+  const openAngle = OPEN_ANGLE[petalShape] * THREE.MathUtils.lerp(1.38, 0.86, bloom);
+  const bloomLength = THREE.MathUtils.lerp(0.72, 1, bloom);
+  const baseLength = BASE_LENGTH[petalShape] * scale * bloomLength;
   const baseWidth = baseLength * BASE_WIDTH_RATIO[petalShape];
+  const edgeNoise = EDGE_NOISE[petalShape];
 
   const petalColorMain = new THREE.Color(visual.petalColor);
   const petalColorAlt = new THREE.Color(visual.petalColorAlt);
@@ -281,19 +385,26 @@ function buildDiscHead(
     const tipColor = isAlt ? petalColorAlt : petalColorMain;
     const baseColor = isAlt ? throatAlt : throatMain;
 
-    const petalGeo = createPetalGeometry(
-      petalShape,
-      layerLength,
-      layerWidth,
-      segments.length,
-      segments.width,
-      { base: baseColor, tip: tipColor }
-    );
-
     for (let i = 0; i < layerCount; i++) {
       const jitter = (random() - 0.5) * 0.1;
       const angle = (i / layerCount) * Math.PI * 2 + rotationOffset + jitter;
-      const angleOpen = openAngle + (random() - 0.5) * 0.06;
+      const angleOpen = openAngle + (random() - 0.5) * 0.08;
+      const lengthJitter = 0.88 + random() * 0.24;
+      const widthJitter = 0.86 + random() * 0.28;
+
+      // Cada pétalo se genera individualmente (no se clona el mismo
+      // triángulo): tamaño y borde propios, para que ninguna flor sea
+      // idéntica a la de al lado.
+      const petalGeo = createPetalGeometry(
+        petalShape,
+        layerLength * lengthJitter,
+        layerWidth * widthJitter,
+        segments.length,
+        segments.width,
+        { base: baseColor, tip: tipColor },
+        { edgeNoise, random }
+      );
+
       const matrix = petalMatrix(attachRadius, angleOpen, angle, layerHeadY);
       parts.push({
         geometry: transformedClone(petalGeo, matrix),
@@ -312,6 +423,7 @@ function buildDiscHead(
       Math.max(6, centerSegs - 4)
     );
     centerGeo.translate(0, headY + 0.01 * scale, 0);
+    applyCenterTexture(centerGeo, centerColorObj, 0.55, random);
     parts.push({ geometry: centerGeo, color: centerColorObj });
   }
 
@@ -355,6 +467,24 @@ function buildStamens(
       color: antherColor,
     });
   }
+
+  // Pistilo central: una columna algo más gruesa que sube derecha por
+  // el medio, con un pequeño bulbo en la punta. Detalle barato que
+  // ancla visualmente el centro de flores con estambres (ej: lirio).
+  const pistilLength = s.length * visual.scale * 1.08;
+  const pistilGeo = new THREE.CylinderGeometry(
+    0.007 * visual.scale,
+    0.01 * visual.scale,
+    pistilLength,
+    6
+  );
+  pistilGeo.translate(0, pistilLength / 2, 0);
+  pistilGeo.translate(0, headY, 0);
+  parts.push({ geometry: pistilGeo, color: filamentColor });
+
+  const pistilTipGeo = new THREE.SphereGeometry(0.014 * visual.scale, 6, 5);
+  pistilTipGeo.translate(0, headY + pistilLength, 0);
+  parts.push({ geometry: pistilTipGeo, color: antherColor });
 }
 
 function buildClusterHead(
@@ -362,33 +492,17 @@ function buildClusterHead(
   random: () => number,
   headY: number,
   segments: { length: number; width: number },
-  parts: MeshPart[]
+  parts: MeshPart[],
+  bloom: number
 ) {
   const { scale, petalCount } = visual;
-  const spikeLength = scale * 0.55;
+  const spikeLength = scale * 0.55 * THREE.MathUtils.lerp(0.8, 1, bloom);
   const floretSteps = Math.max(6, Math.round(petalCount / 4));
   const petalColorMain = new THREE.Color(visual.petalColor);
   const petalColorAlt = new THREE.Color(visual.petalColorAlt);
   const centerColorObj = new THREE.Color(visual.centerColor);
   const throatMain = throatTone(petalColorMain, centerColorObj);
   const throatAlt = throatTone(petalColorAlt, centerColorObj);
-
-  const floretGeoMain = createPetalGeometry(
-    "thin",
-    0.1 * scale,
-    0.06 * scale,
-    Math.max(2, Math.floor(segments.length / 2)),
-    Math.max(1, Math.floor(segments.width / 2)),
-    { base: throatMain, tip: petalColorMain }
-  );
-  const floretGeoAlt = createPetalGeometry(
-    "thin",
-    0.1 * scale,
-    0.06 * scale,
-    Math.max(2, Math.floor(segments.length / 2)),
-    Math.max(1, Math.floor(segments.width / 2)),
-    { base: throatAlt, tip: petalColorAlt }
-  );
 
   for (let k = 0; k < floretSteps; k++) {
     const t = k / (floretSteps - 1 || 1);
@@ -398,10 +512,20 @@ function buildClusterHead(
     const stagger = k * 0.7;
     for (let p = 0; p < subPetals; p++) {
       const angle = (p / subPetals) * Math.PI * 2 + stagger + random() * 0.2;
-      const matrix = petalMatrix(radius * 0.5, 0.75, angle, y);
       const useAlt = p % 2 === 0;
+      const sizeJitter = 0.82 + random() * 0.32;
+      const floretGeo = createPetalGeometry(
+        "thin",
+        0.1 * scale * sizeJitter,
+        0.06 * scale * sizeJitter,
+        Math.max(2, Math.floor(segments.length / 2)),
+        Math.max(1, Math.floor(segments.width / 2)),
+        { base: useAlt ? throatAlt : throatMain, tip: useAlt ? petalColorAlt : petalColorMain },
+        { edgeNoise: 0.04, random }
+      );
+      const matrix = petalMatrix(radius * 0.5, 0.75, angle, y);
       parts.push({
-        geometry: transformedClone(useAlt ? floretGeoAlt : floretGeoMain, matrix),
+        geometry: transformedClone(floretGeo, matrix),
         color: useAlt ? petalColorAlt : petalColorMain,
       });
     }
@@ -419,16 +543,20 @@ function buildClusterHead(
 
 /** Arreglo "domo": muchas florcitas de 4 pétalos cubriendo una
  * semiesfera (tipo hortensia/mophead), distribuidas con espiral
- * áurea para que no se amontonen en el centro ni en el borde. */
+ * áurea para que no se amontonen en el centro ni en el borde. Cada
+ * florcita tiene su propio tamaño y una mezcla de color levemente
+ * distinta, para que la cabeza floral se lea como un ramillete real
+ * de muchas flores pequeñas y no como una sola bocha uniforme. */
 function buildDomeHead(
   visual: FlowerVisual,
   random: () => number,
   headY: number,
   segments: { length: number; width: number },
-  parts: MeshPart[]
+  parts: MeshPart[],
+  bloom: number
 ) {
   const { scale, petalCount } = visual;
-  const domeRadius = 0.34 * scale;
+  const domeRadius = 0.34 * scale * THREE.MathUtils.lerp(0.82, 1, bloom);
   const floretSize = 0.1 * scale;
   const petalColorMain = new THREE.Color(visual.petalColor);
   const petalColorAlt = new THREE.Color(visual.petalColorAlt);
@@ -436,23 +564,6 @@ function buildDomeHead(
   const throatMain = throatTone(petalColorMain, centerColorObj);
   const throatAlt = throatTone(petalColorAlt, centerColorObj);
   const GOLDEN_ANGLE = 2.399963;
-
-  const floretGeoMain = createPetalGeometry(
-    "round",
-    floretSize,
-    floretSize * 0.9,
-    Math.max(2, Math.floor(segments.length / 2)),
-    Math.max(2, Math.floor(segments.width / 2)),
-    { base: throatMain, tip: petalColorMain }
-  );
-  const floretGeoAlt = createPetalGeometry(
-    "round",
-    floretSize,
-    floretSize * 0.9,
-    Math.max(2, Math.floor(segments.length / 2)),
-    Math.max(2, Math.floor(segments.width / 2)),
-    { base: throatAlt, tip: petalColorAlt }
-  );
 
   const floretCount = Math.max(30, petalCount);
   for (let i = 0; i < floretCount; i++) {
@@ -463,13 +574,25 @@ function buildDomeHead(
     const ringRadius = Math.sin(phi) * domeRadius;
     const y = headY + Math.cos(phi) * domeRadius * 0.9;
     const openAngle = 0.5 + phi * 0.3;
-    const useAlt = random() < 0.35;
+    const mixT = random();
+    const useAlt = mixT < 0.35;
+    const floretScale = 0.8 + random() * 0.4;
+
+    const floretGeo = createPetalGeometry(
+      "round",
+      floretSize * 0.9 * floretScale,
+      floretSize * 0.9 * 0.9 * floretScale,
+      Math.max(2, Math.floor(segments.length / 2)),
+      Math.max(2, Math.floor(segments.width / 2)),
+      { base: useAlt ? throatAlt : throatMain, tip: useAlt ? petalColorAlt : petalColorMain },
+      { edgeNoise: 0.05, random }
+    );
 
     for (let p = 0; p < 4; p++) {
       const angle = theta + (p - 1.5) * 0.13;
       const matrix = petalMatrix(ringRadius, openAngle, angle, y);
       parts.push({
-        geometry: transformedClone(useAlt ? floretGeoAlt : floretGeoMain, matrix),
+        geometry: transformedClone(floretGeo, matrix),
         color: useAlt ? petalColorAlt : petalColorMain,
       });
     }
@@ -488,50 +611,68 @@ export function buildFlowerGeometry(
   options: BuildOptions = { detail: "field" }
 ): THREE.BufferGeometry {
   const random = createSeededRandom(seed);
+  const bloom = options.bloom ?? 1;
   const segments =
     options.detail === "showcase"
-      ? { length: 8, width: 4 }
-      : { length: 4, width: 2 };
+      ? { length: 9, width: 5 }
+      : { length: 5, width: 3 };
 
   const parts: MeshPart[] = [];
   const stemColor = new THREE.Color(visual.stemColor);
-  const stemColorLight = stemColor.clone().lerp(new THREE.Color("#ffffff"), 0.18);
 
+  // --- Tallo, con una leve curva natural (no perfectamente recto) ---
   const stemGeo = new THREE.CylinderGeometry(
     0.018 * visual.scale,
     0.03 * visual.scale,
     visual.stemHeight,
-    6
+    7
   );
   stemGeo.translate(0, visual.stemHeight / 2, 0);
+  const bendAngle = random() * Math.PI * 2;
+  bendStemGeometry(
+    stemGeo,
+    visual.stemHeight,
+    0.04 * visual.stemHeight,
+    Math.cos(bendAngle),
+    Math.sin(bendAngle)
+  );
   parts.push({ geometry: stemGeo, color: stemColor });
 
-  const leafGeo = createPetalGeometry(
-    "pointed",
-    0.22 * visual.scale,
-    0.09 * visual.scale,
-    3,
-    2,
-    { base: stemColor, tip: stemColorLight }
-  );
-  [0.42, 0.68].forEach((heightRatio, i) => {
+  // --- Hojas: cantidad, tamaño, ángulo y tono variables ---
+  const leafCount = random() < 0.6 ? 2 : 3;
+  for (let i = 0; i < leafCount; i++) {
+    const heightRatio = 0.32 + (i / leafCount) * 0.5 + random() * 0.1;
     const side = i % 2 === 0 ? 1 : -1;
-    const angle = side * (0.9 + random() * 0.3);
+    const angle = side * (0.85 + random() * 0.4);
+    const leafScale = 0.75 + random() * 0.5;
+    const leafLight = stemColor
+      .clone()
+      .lerp(new THREE.Color(random() < 0.5 ? "#dff2c8" : "#6bd08a"), 0.16 + random() * 0.14);
+
+    const leafGeo = createPetalGeometry(
+      "pointed",
+      0.22 * visual.scale * leafScale,
+      0.09 * visual.scale * leafScale,
+      3,
+      2,
+      { base: stemColor, tip: leafLight },
+      { edgeNoise: 0.05, random }
+    );
     const matrix = petalMatrix(
       0.01 * visual.scale,
-      -0.35,
+      -0.35 - random() * 0.15,
       angle,
-      visual.stemHeight * heightRatio
+      visual.stemHeight * Math.min(0.85, heightRatio)
     );
     parts.push({ geometry: transformedClone(leafGeo, matrix), color: stemColor });
-  });
+  }
 
   if (visual.petalShape === "cluster") {
-    buildClusterHead(visual, random, visual.stemHeight, segments, parts);
+    buildClusterHead(visual, random, visual.stemHeight, segments, parts, bloom);
   } else if (visual.petalShape === "dome") {
-    buildDomeHead(visual, random, visual.stemHeight, segments, parts);
+    buildDomeHead(visual, random, visual.stemHeight, segments, parts, bloom);
   } else {
-    buildDiscHead(visual, random, visual.stemHeight, segments, parts);
+    buildDiscHead(visual, random, visual.stemHeight, segments, parts, bloom);
   }
 
   const merged = mergeParts(parts);

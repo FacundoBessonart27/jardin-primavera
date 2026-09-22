@@ -18,22 +18,29 @@ interface SpeciesGroupProps {
   visual: FlowerVisual;
   placements: FlowerPlacement[];
   isSpecial: boolean;
+  bloom: number;
 }
 
 const dummy = new THREE.Object3D();
 
-function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroupProps) {
+function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: SpeciesGroupProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(
-    () => getFlowerGeometry(speciesId, visual, "field"),
-    [speciesId, visual]
+    () => getFlowerGeometry(speciesId, visual, "field", bloom),
+    [speciesId, visual, bloom]
   );
+  // MeshPhysicalMaterial en vez de Standard: un clearcoat muy sutil le
+  // da a los pétalos un brillo tenue y orgánico (como una superficie
+  // levemente cerosa) en vez del aspecto "plástico" de un material
+  // puramente mate/difuso, sin agregar draw calls ni geometría extra.
   const material = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshPhysicalMaterial({
         vertexColors: true,
-        roughness: 0.55,
-        metalness: 0.05,
+        roughness: 0.52,
+        metalness: 0.02,
+        clearcoat: 0.18,
+        clearcoatRoughness: 0.45,
         side: THREE.DoubleSide,
       }),
     []
@@ -116,7 +123,11 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
         groundY + (isSelected ? 0.06 : 0),
         p.position[2]
       );
-      dummy.rotation.set(windTilt, p.rotationY + windSway, windSway * 0.6);
+      dummy.rotation.set(
+        windTilt + p.leanX,
+        p.rotationY + windSway,
+        windSway * 0.6 + p.leanZ
+      );
       dummy.scale.setScalar(revealScale * p.scaleVariance * bump * specialPulse);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
@@ -164,34 +175,42 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial }: SpeciesGroup
   );
 }
 
+// bloom (0..1) por variante: la "0" no es un capullo totalmente cerrado
+// (se seguiría viendo raro sin pétalos), sino una flor entreabierta.
+const BLOOM_BY_VARIANT: Record<0 | 1, number> = { 0: 0.42, 1: 1 };
+
 export function FlowerField({ count }: { count: number }) {
   const layout = useMemo(() => generateFieldLayout(count), [count]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, FlowerPlacement[]>();
     for (const placement of layout) {
-      const list = map.get(placement.speciesId) ?? [];
+      const key = `${placement.speciesId}:${placement.bloomVariant}`;
+      const list = map.get(key) ?? [];
       list.push(placement);
-      map.set(placement.speciesId, list);
+      map.set(key, list);
     }
     return map;
   }, [layout]);
 
   return (
     <group>
-      {[...regularFlowerSpecies, specialFlower].map((species) => {
-        const placements = grouped.get(species.id);
-        if (!placements || placements.length === 0) return null;
-        return (
-          <SpeciesGroup
-            key={species.id}
-            speciesId={species.id}
-            visual={species.visual}
-            placements={placements}
-            isSpecial={Boolean(species.isSpecial)}
-          />
-        );
-      })}
+      {[...regularFlowerSpecies, specialFlower].flatMap((species) =>
+        ([0, 1] as const).map((variant) => {
+          const placements = grouped.get(`${species.id}:${variant}`);
+          if (!placements || placements.length === 0) return null;
+          return (
+            <SpeciesGroup
+              key={`${species.id}:${variant}`}
+              speciesId={species.id}
+              visual={species.visual}
+              placements={placements}
+              isSpecial={Boolean(species.isSpecial)}
+              bloom={BLOOM_BY_VARIANT[variant]}
+            />
+          );
+        })
+      )}
     </group>
   );
 }

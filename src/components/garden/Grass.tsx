@@ -15,10 +15,16 @@ function createBladeGeometry() {
   const heights = [0, 0.18, 0.34, BLADE_HEIGHT];
   const widths = [0.045, 0.035, 0.02, 0.0];
   const positions: number[] = [];
+  const colors: number[] = [];
   const indices: number[] = [];
+
+  const base = new THREE.Color("#245c38");
+  const tip = new THREE.Color("#6fb35a");
 
   heights.forEach((h, i) => {
     positions.push(-widths[i], h, 0, widths[i], h, 0);
+    const c = base.clone().lerp(tip, Math.pow(h / BLADE_HEIGHT, 0.8));
+    colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
   });
 
   for (let i = 0; i < heights.length - 1; i++) {
@@ -31,6 +37,7 @@ function createBladeGeometry() {
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
@@ -52,7 +59,7 @@ export function Grass({ count, windStrength }: GrassProps) {
 
   const material = useMemo(() => {
     const mat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color("#3f8c5c"),
+      vertexColors: true,
       roughness: 1,
       side: THREE.DoubleSide,
     });
@@ -102,10 +109,17 @@ export function Grass({ count, windStrength }: GrassProps) {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
+      // Variación sutil de tono por mata: evita que todo el pasto se
+      // vea de exactamente el mismo verde.
+      const tint = 0.82 + random() * 0.36;
+      const warmth = 0.94 + random() * 0.18;
+      mesh.setColorAt(i, new THREE.Color(tint * warmth, tint, tint * 0.94));
+
       phases[i] = random() * Math.PI * 2;
     }
 
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.geometry.setAttribute(
       "aPhase",
       new THREE.InstancedBufferAttribute(phases, 1)
