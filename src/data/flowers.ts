@@ -47,6 +47,9 @@ export interface FlowerVisual {
   colorVariance: number;
   /** Multiplicador del tamaño del centro (0 lo oculta). Por defecto 1. */
   centerScale?: number;
+  /** Forma del centro: "sphere" (bocha, por defecto) o "disc" (disco
+   * compacto de florecitas, tipo margarita/caléndula/girasol). */
+  centerShape?: "sphere" | "disc";
   /** Estambres largos y visibles saliendo del centro (ej: lirio). */
   stamens?: {
     count: number;
@@ -139,6 +142,8 @@ export const flowerSpecies: FlowerSpecies[] = [
       scale: 1.3,
       stemHeight: 1.6,
       colorVariance: 0.05,
+      centerScale: 1.25,
+      centerShape: "disc",
     },
     content: {
       name: "Girasol",
@@ -218,6 +223,8 @@ export const flowerSpecies: FlowerSpecies[] = [
       scale: 0.6,
       stemHeight: 0.85,
       colorVariance: 0.06,
+      centerScale: 1.05,
+      centerShape: "disc",
     },
     content: {
       name: "Margarita",
@@ -261,11 +268,12 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#ff8fb1",
       centerColor: "#7a1f4d",
       stemColor: "#2c6b47",
-      petalCount: 22,
-      layers: 2,
+      petalCount: 30,
+      layers: 3,
       scale: 1.05,
       stemHeight: 1.15,
-      colorVariance: 0.1,
+      colorVariance: 0.12,
+      centerScale: 0.7,
     },
     content: {
       name: "Dalia",
@@ -381,12 +389,12 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#ffd6e0",
       centerColor: "#c23d63",
       stemColor: "#5b8f6b",
-      petalCount: 34,
-      layers: 4,
-      scale: 0.8,
+      petalCount: 40,
+      layers: 5,
+      scale: 0.78,
       stemHeight: 1.0,
       colorVariance: 0.14,
-      centerScale: 0.4,
+      centerScale: 0.26,
     },
     content: {
       name: "Clavel",
@@ -405,7 +413,7 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColor: "#fff1f7",
       petalColorAlt: "#ffd9ec",
       centerColor: "#f6d9ec",
-      centerScale: 0.35,
+      centerScale: 0.42,
       stemColor: "#3f8c5c",
       petalCount: 6,
       layers: 1,

@@ -21,11 +21,16 @@ export interface FlowerPlacement {
    * apoye en un ángulo levemente distinto, como en un jardín real. */
   leanX: number;
   leanZ: number;
-  /** 0 = capullo entreabierto, 1 = flor completamente abierta. Cada
-   * variante usa su propia geometría (ver flowerGeometryCache), así
-   * que las flores de una misma especie no se ven todas en el mismo
-   * estado de apertura. */
-  bloomVariant: 0 | 1;
+  /** Estiramiento no uniforme (ancho vs. alto) fijo por ejemplar: dos
+   * flores de la misma especie con el mismo `scaleVariance` igual se
+   * ven distintas (una más "regordeta", otra más esbelta), sin generar
+   * geometría nueva ni afectar el instancing. */
+  stretch: number;
+  /** 0 = capullo cerrado, 1 = entreabierta, 2 = completamente abierta.
+   * Cada variante usa su propia geometría (ver flowerGeometryCache),
+   * así que las flores de una misma especie no se ven todas en el
+   * mismo estado de apertura. */
+  bloomVariant: 0 | 1 | 2;
 }
 
 const FIELD_SEED = 20260921;
@@ -148,10 +153,16 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
       windPhase: random() * Math.PI * 2,
       leanX: (random() - 0.5) * 0.16,
       leanZ: (random() - 0.5) * 0.16,
-      // La mayoría de las flores se ven completamente abiertas; una
-      // minoría queda como capullo entreabierto para dar variedad de
-      // etapas dentro del mismo campo.
-      bloomVariant: random() < 0.22 ? 0 : 1,
+      stretch: 0.9 + random() * 0.2,
+      // La mayoría de las flores se ven completamente abiertas, algunas
+      // quedan entreabiertas y unas pocas como capullo cerrado, para
+      // dar variedad de etapas dentro del mismo campo.
+      bloomVariant: (() => {
+        const roll = random();
+        if (roll < 0.1) return 0;
+        if (roll < 0.28) return 1;
+        return 2;
+      })(),
     });
   }
 
@@ -168,7 +179,8 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
     windPhase: 1.2,
     leanX: 0,
     leanZ: 0,
-    bloomVariant: 1,
+    stretch: 1,
+    bloomVariant: 2,
   });
 
   return placed;

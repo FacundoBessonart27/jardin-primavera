@@ -23,28 +23,98 @@ interface SpeciesGroupProps {
 
 const dummy = new THREE.Object3D();
 
+// Dirección (normalizada) de la luz clave de la escena (ver
+// GardenScene: directionalLight en [6, 9, 4]) y su color cálido,
+// reutilizados para una simulación liviana de subsuperficie en los
+// pétalos (ver material más abajo).
+const SSS_LIGHT_DIR = new THREE.Vector3(6, 9, 4).normalize();
+const SSS_LIGHT_COLOR = new THREE.Color("#ffcf8a");
+
 function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: SpeciesGroupProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(
     () => getFlowerGeometry(speciesId, visual, "field", bloom),
     [speciesId, visual, bloom]
   );
+  const windTimeUniform = useRef({ value: 0 });
+  const windStrengthUniform = useRef({ value: 0 });
+
   // MeshPhysicalMaterial en vez de Standard: un clearcoat muy sutil le
   // da a los pétalos un brillo tenue y orgánico (como una superficie
   // levemente cerosa) en vez del aspecto "plástico" de un material
   // puramente mate/difuso, sin agregar draw calls ni geometría extra.
-  const material = useMemo(
-    () =>
-      new THREE.MeshPhysicalMaterial({
-        vertexColors: true,
-        roughness: 0.52,
-        metalness: 0.02,
-        clearcoat: 0.18,
-        clearcoatRoughness: 0.45,
-        side: THREE.DoubleSide,
-      }),
-    []
-  );
+  const material = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      vertexColors: true,
+      roughness: 0.52,
+      metalness: 0.02,
+      clearcoat: 0.18,
+      clearcoatRoughness: 0.45,
+      side: THREE.DoubleSide,
+    });
+
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uSssLightDir = { value: SSS_LIGHT_DIR };
+      shader.uniforms.uSssColor = { value: SSS_LIGHT_COLOR };
+      shader.uniforms.uTime = windTimeUniform.current;
+      shader.uniforms.uWindStrength = windStrengthUniform.current;
+      shader.uniforms.uStemHeight = { value: visual.stemHeight };
+
+      // Viento por vértice (mismo enfoque que Grass.tsx): cada pieza de
+      // la flor (tallo, pétalo, hoja, estambre...) tiene su propia fase
+      // horneada en `aWindPhase`, así no se mueven todas en bloque como
+      // un único objeto rígido. El tallo (fase 0, y=0 en la base) casi
+      // no se mueve cerca del suelo y flexiona un poco más cerca de la
+      // cabeza floral; los pétalos, por encima de esa altura, además
+      // "revolotean" un poco en Y con su propia fase.
+      shader.vertexShader =
+        `attribute float aWindPhase;\nattribute float aRoughOffset;\nvarying float vRoughOffset;\n` +
+        `uniform float uTime;\nuniform float uWindStrength;\nuniform float uStemHeight;\n` +
+        shader.vertexShader;
+      // Un único reemplazo de `#include <begin_vertex>`: encadenar dos
+      // `.replace()` sobre el mismo token haría que el segundo no
+      // encuentre nada (el primero ya lo consumió), así que el bend de
+      // viento y la variable de rugosidad se inyectan juntos acá.
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        vRoughOffset = aRoughOffset;
+        float windT = clamp(transformed.y / max(uStemHeight, 0.001), 0.0, 1.5);
+        float stemBend = min(windT, 1.0);
+        stemBend *= stemBend;
+        float sway = sin(uTime * 1.15 + aWindPhase) * 0.03 * uWindStrength * stemBend;
+        float sway2 = sin(uTime * 2.3 + aWindPhase * 1.7) * 0.014 * uWindStrength * stemBend;
+        transformed.x += sway + sway2;
+        transformed.z += cos(uTime * 0.95 + aWindPhase * 0.8) * 0.018 * uWindStrength * stemBend;
+        float aboveHead = clamp(windT - 1.0, 0.0, 1.0);
+        transformed.y += sin(uTime * 3.6 + aWindPhase * 2.1) * 0.01 * uWindStrength * aboveHead;`
+      );
+      shader.fragmentShader =
+        `varying float vRoughOffset;\nuniform vec3 uSssLightDir;\nuniform vec3 uSssColor;\n` +
+        shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <roughnessmap_fragment>",
+        `#include <roughnessmap_fragment>
+        roughnessFactor = clamp(roughnessFactor + vRoughOffset, 0.05, 1.0);`
+      );
+
+      // Simulación liviana de subsuperficie: cuando la luz clave queda
+      // "detrás" de la cara visible de un pétalo (la normal mira en
+      // sentido contrario a la luz), se filtra un poco del propio color
+      // del pétalo, como pasa con pétalos finos a contraluz. Sin texturas
+      // ni pasadas de render extra: sólo un par de líneas más en el
+      // fragment shader que Three.js ya genera para este material.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <output_fragment>",
+        `float sssBack = max(0.0, -dot(normalize(normal), uSssLightDir));
+        float sssTerm = pow(sssBack, 1.6) * 0.4;
+        outgoingLight += sssTerm * diffuseColor.rgb * uSssColor;
+        #include <output_fragment>`
+      );
+    };
+
+    return mat;
+  }, [visual.stemHeight]);
 
   const bumpRef = useRef<Float32Array>(
     new Float32Array(placements.length).fill(1)
@@ -87,6 +157,9 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
     const mesh = meshRef.current;
     if (!mesh) return;
 
+    windTimeUniform.current.value = sceneUniforms.windTime;
+    windStrengthUniform.current.value = sceneUniforms.windStrength;
+
     const { hoveredInstanceId, selected, foundSpecialFlower } =
       useExperienceStore.getState();
 
@@ -128,7 +201,8 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
         p.rotationY + windSway,
         windSway * 0.6 + p.leanZ
       );
-      dummy.scale.setScalar(revealScale * p.scaleVariance * bump * specialPulse);
+      const s = revealScale * p.scaleVariance * bump * specialPulse;
+      dummy.scale.set(s * p.stretch, s, s * p.stretch);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     }
@@ -175,9 +249,9 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
   );
 }
 
-// bloom (0..1) por variante: la "0" no es un capullo totalmente cerrado
-// (se seguiría viendo raro sin pétalos), sino una flor entreabierta.
-const BLOOM_BY_VARIANT: Record<0 | 1, number> = { 0: 0.42, 1: 1 };
+// bloom (0..1) por variante: 0 = capullo bien cerrado, 1 = entreabierta,
+// 2 = flor completamente abierta.
+const BLOOM_BY_VARIANT: Record<0 | 1 | 2, number> = { 0: 0.12, 1: 0.55, 2: 1 };
 
 export function FlowerField({ count }: { count: number }) {
   const layout = useMemo(() => generateFieldLayout(count), [count]);
@@ -196,7 +270,7 @@ export function FlowerField({ count }: { count: number }) {
   return (
     <group>
       {[...regularFlowerSpecies, specialFlower].flatMap((species) =>
-        ([0, 1] as const).map((variant) => {
+        ([0, 1, 2] as const).map((variant) => {
           const placements = grouped.get(`${species.id}:${variant}`);
           if (!placements || placements.length === 0) return null;
           return (
