@@ -10,7 +10,7 @@ presentación 3D y encontrar una flor especial escondida.
 
 | Tecnología | Para qué se usa | Por qué |
 |---|---|---|
-| **Next.js 14 (App Router) + TypeScript** | Estructura de la app | Arranque rápido, build optimizado, tipado fuerte para no romper nada al editar contenido, y despliegue trivial en Vercel/Netlify. |
+| **Next.js 14 (App Router) + TypeScript** | Estructura de la app | Arranque rápido, build optimizado, tipado fuerte para no romper nada al editar contenido. Configurado con `output: "export"` para generar un sitio 100% estático publicable en GitHub Pages. |
 | **React Three Fiber + Three.js** | El jardín 3D (cielo, pasto, flores, mariposas, pétalos) | Permite construir toda la escena de forma declarativa en React sin perder control fino sobre geometría y rendimiento (instancing, shaders). |
 | **@react-three/drei** | Utilidades de R3F | `OrbitControls`, `PerformanceMonitor`, helpers que evitan reinventar la rueda. |
 | **GSAP** | Transición de cámara (pantalla 1 → jardín, foco en flor, finale) | El motor de animación más confiable para secuencias de cámara con timelines complejos, fuera del ciclo de render de React. |
@@ -30,6 +30,8 @@ cada especie tenga forma, color y comportamiento propios. Ver el punto
 ## Estructura del proyecto
 
 ```
+.github/
+  workflows/deploy-gh-pages.yml → Build + deploy automático a GitHub Pages
 src/
   app/                    → Next.js App Router (layout, page, estilos globales)
   config/giftConfig.ts    → 🔴 TEXTOS PERSONALES (ver abajo)
@@ -44,9 +46,12 @@ src/
   store/                  → Estado global (Zustand)
   animations/             → Timelines de cámara (GSAP)
   lib/                    → Utilidades (random determinístico, easing,
-                             texturas procedurales, control de cámara)
+                             texturas procedurales, control de cámara,
+                             basePath.ts para assets en GitHub Pages)
 public/
   audio/                  → Música ambiental opcional (ver instrucciones adentro)
+  .nojekyll               → Evita que GitHub Pages ignore la carpeta _next/
+next.config.mjs           → output:"export" + basePath/assetPrefix para GH Pages
 ```
 
 ## 🔴 Dónde editar los mensajes personales
@@ -85,12 +90,20 @@ npm run dev
 Abrí `http://localhost:3000`. Cambios en `giftConfig.ts` o `flowers.ts` se
 reflejan al instante (hot reload).
 
-Para probar el build de producción localmente:
+Para probar el **export estático** (el mismo que se publica en GitHub
+Pages) de forma local:
 
 ```bash
-npm run build
-npm run start
+npm run build:gh-pages   # genera ./out con basePath /jardin-primavera/
+npm run serve            # sirve ./out en http://localhost:3000
 ```
+
+Como el export local se sirve con basePath, abrí
+`http://localhost:3000/jardin-primavera/` (con la barra final).
+
+`npm run build` (sin `:gh-pages`) también genera un export estático en
+`./out`, pero sin basePath — útil para revisar que el build compila bien
+sin tener que simular la ruta de GitHub Pages.
 
 ## Música ambiental
 
@@ -122,28 +135,73 @@ completo se dibuja en un puñado de draw calls sin importar cuántas flores
 haya. Se respeta `prefers-reduced-motion` del sistema operativo, reduciendo
 el viento, las animaciones de cámara y las partículas.
 
-## Cómo publicarlo gratis
+## Cómo publicarlo en GitHub Pages
 
-La forma más simple es **Vercel** (los creadores de Next.js):
+El proyecto está configurado como **sitio 100% estático** (`output: "export"`
+en `next.config.mjs`) y trae un workflow de GitHub Actions
+(`.github/workflows/deploy-gh-pages.yml`) que hace el build y el deploy
+automáticamente en cada push a `main`. No hace falta ningún build manual ni
+subir la carpeta `out/` a mano.
 
-1. Subí este proyecto a un repositorio de GitHub.
-2. Entrá a [vercel.com](https://vercel.com), "Add New Project" → importá el
-   repo.
-3. Vercel detecta Next.js automáticamente. Dejá la configuración por
-   defecto y hacé deploy.
-4. En 1-2 minutos tenés una URL pública (`tu-proyecto.vercel.app`) para
-   compartir.
+### 1. Habilitar GitHub Pages en el repositorio
 
-Alternativas igual de válidas:
+1. Entrá al repositorio en GitHub: `https://github.com/<tu-usuario>/jardin-primavera`.
+2. Andá a **Settings** → **Pages** (menú lateral izquierdo, dentro de "Code and automation").
+3. En **"Build and deployment" → "Source"**, seleccioná **"GitHub Actions"**
+   (no "Deploy from a branch"). Con esto alcanza — no hace falta elegir
+   ninguna branch ni carpeta ahí, el workflow se encarga de todo.
 
-- **Netlify**: "Add new site" → "Import an existing project", conectá el
-  repo. Netlify también detecta Next.js automáticamente (usa el plugin
-  oficial `@netlify/plugin-nextjs`).
-- **GitHub Pages**: requiere exportar el sitio como estático
-  (`next export` / `output: "export"` en `next.config.mjs`). No lo
-  configuré por defecto porque esta app usa rutas dinámicas de Next.js que
-  funcionan mejor con Vercel/Netlify, pero si preferís GitHub Pages avisame
-  y lo dejo listo.
+### 2. Hacer el deploy
+
+1. Hacé push (o mergeá un Pull Request) a la rama `main`.
+2. Andá a la pestaña **Actions** del repositorio y vas a ver corriendo el
+   workflow **"Deploy a GitHub Pages"**. Tiene dos jobs: `build` (instala
+   dependencias y genera el export estático) y `deploy` (lo publica).
+3. Cuando el job `deploy` termina en verde, el sitio ya está publicado.
+   También podés disparar el deploy a mano desde
+   **Actions → Deploy a GitHub Pages → Run workflow** (sirve para
+   republicar sin necesidad de un nuevo commit).
+
+### 3. Acceder al sitio publicado
+
+Como el repositorio se llama `jardin-primavera` (un repo, no el especial
+`<usuario>.github.io`), GitHub Pages lo publica como **project site** en:
+
+```
+https://<tu-usuario>.github.io/jardin-primavera/
+```
+
+Reemplazá `<tu-usuario>` por el usuario u organización dueño del
+repositorio (a partir del remoto de este repo, sería
+`https://facundobessonart27.github.io/jardin-primavera/` — confirmalo en
+**Settings → Pages**, GitHub muestra ahí la URL exacta una vez que el
+primer deploy termina).
+
+> La barra final (`/`) importa: `next.config.mjs` tiene `trailingSlash: true`
+> justamente para que las rutas funcionen bien en GitHub Pages.
+
+### Cómo funciona el basePath
+
+Este proyecto vive en `https://<usuario>.github.io/jardin-primavera/`, es
+decir, **no** en la raíz del dominio. Por eso `next.config.mjs` configura:
+
+```js
+basePath: "/jardin-primavera"      // sólo cuando GITHUB_PAGES=true
+assetPrefix: "/jardin-primavera/"  // ídem
+```
+
+El workflow de GitHub Actions setea `GITHUB_PAGES=true` antes de correr
+`npm run build`, así que **no tenés que hacer nada manualmente**: el mismo
+código sirve tanto en local (`npm run dev`, sin basePath) como publicado
+(con basePath). Si alguna vez renombrás el repositorio, actualizá la
+constante `REPO_NAME` al principio de `next.config.mjs`.
+
+### Otras plataformas
+
+A pedido, este proyecto está configurado **específicamente y únicamente**
+para GitHub Pages. Si en el futuro preferís Vercel o Netlify, el mismo
+código funciona ahí también (esas plataformas no necesitan basePath porque
+sirven desde la raíz del dominio) — avisame y ajusto la configuración.
 
 ## Alternativas y decisiones de diseño
 
@@ -162,6 +220,21 @@ Alternativas igual de válidas:
 - **Música**: no incluí un archivo de audio de stock para evitar cualquier
   duda de licencia; la estructura queda lista para que agregues el que
   prefieras (ver sección de música arriba).
+- **`npm run start` no existe**: con `output: "export"` no hay servidor
+  Next.js corriendo en producción (todo es HTML/JS/CSS estático), así que
+  `next start` no aplica. Para previsualizar el resultado final localmente
+  usá `npm run build:gh-pages && npm run serve` (ver "Cómo ejecutarlo
+  localmente").
+- **Assets y basePath**: todas las flores, el cielo, las nubes, las
+  mariposas y los pétalos se generan por código (geometría y texturas de
+  canvas en tiempo de ejecución), así que no dependen de ninguna ruta de
+  archivo — funcionan igual sirviendo desde `/` o desde
+  `/jardin-primavera/`. El único archivo estático que el código referencia
+  en tiempo de ejecución es la música opcional (`/audio/ambient.mp3`), que
+  pasa por el helper `withBasePath()` (`src/lib/basePath.ts`) para
+  resolver bien en cualquiera de los dos casos. Las tipografías
+  (`next/font/google`) y el ícono (`app/icon.svg`) los resuelve Next.js
+  automáticamente con el basePath correcto.
 
 ## Qué revisar antes de regalarlo
 

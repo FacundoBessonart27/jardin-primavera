@@ -3,12 +3,20 @@ import * as THREE from "three";
 import { cameraController, CAMERA_POSITIONS } from "@/lib/cameraController";
 import { sceneUniforms } from "@/lib/sceneUniforms";
 import { useExperienceStore } from "@/store/experienceStore";
+import {
+  playerState,
+  forwardFromLook,
+  syncPlayerStateFromCamera,
+} from "@/lib/playerState";
+import { heightAt } from "@/lib/terrain";
 
 /**
  * Transición de "Entrar al jardín": la cámara avanza desde la vista
  * abierta de la pantalla 1 hacia la posición de exploración, mientras
  * el jardín se revela progresivamente (ver sceneUniforms.reveal,
- * consumido por FlowerField para hacer crecer cada flor).
+ * consumido por FlowerField para hacer crecer cada flor). Al terminar,
+ * el control pasa a FirstPersonControls exactamente desde donde quedó
+ * la cámara (ver syncPlayerStateFromCamera), sin saltos.
  */
 export function playEnterGardenTransition(prefersReducedMotion: boolean) {
   const store = useExperienceStore.getState();
@@ -18,6 +26,11 @@ export function playEnterGardenTransition(prefersReducedMotion: boolean) {
   const from = CAMERA_POSITIONS.intro;
   const to = CAMERA_POSITIONS.gardenHome;
 
+  const finishEntering = () => {
+    syncPlayerStateFromCamera();
+    store.setPhase("garden");
+  };
+
   if (!camera || prefersReducedMotion) {
     sceneUniforms.reveal = 1;
     if (camera) {
@@ -26,7 +39,7 @@ export function playEnterGardenTransition(prefersReducedMotion: boolean) {
       camera.fov = to.fov;
       camera.updateProjectionMatrix();
     }
-    window.setTimeout(() => store.setPhase("garden"), 400);
+    window.setTimeout(finishEntering, 400);
     return;
   }
 
@@ -35,7 +48,7 @@ export function playEnterGardenTransition(prefersReducedMotion: boolean) {
 
   const timeline = gsap.timeline({
     defaults: { ease: "power2.inOut" },
-    onComplete: () => store.setPhase("garden"),
+    onComplete: finishEntering,
   });
 
   timeline.to(
@@ -82,13 +95,17 @@ export function playEnterGardenTransition(prefersReducedMotion: boolean) {
   return timeline;
 }
 
-/** Acerca la cámara suavemente hacia una flor seleccionada. */
+/** Acerca la cámara suavemente hacia una flor seleccionada, pausando
+ * el movimiento del jugador mientras el panel está abierto (y
+ * liberando el mouse si estaba bloqueado, para poder usar la UI). */
 export function focusOnFlower(position: [number, number, number]) {
   const camera = cameraController.camera;
-  const controls = cameraController.controls;
   if (!camera) return;
 
-  if (controls) controls.enabled = false;
+  playerState.movementEnabled = false;
+  if (typeof document !== "undefined" && document.pointerLockElement) {
+    document.exitPointerLock();
+  }
 
   const [x, y, z] = position;
   const flowerPoint = new THREE.Vector3(x, y + 1, z);
@@ -108,53 +125,51 @@ export function focusOnFlower(position: [number, number, number]) {
     ease: "power3.out",
     onUpdate: () => camera.lookAt(x, y + 0.6, z),
   });
-
-  if (controls) {
-    gsap.to(controls.target, {
-      x,
-      y: y + 0.6,
-      z,
-      duration: 1.4,
-      ease: "power3.out",
-    });
-  }
 }
 
-/** Vuelve la cámara a la posición de exploración libre del jardín. */
+/** Devuelve la cámara exactamente a donde el jugador estaba parado y
+ * mirando antes de abrir el panel de una flor (no a un punto fijo),
+ * para que se sienta como retomar una caminata y no un teletransporte.
+ * Al terminar, FirstPersonControls retoma el control. */
 export function returnToGardenHome() {
   const camera = cameraController.camera;
-  const controls = cameraController.controls;
   if (!camera) return;
-  const home = CAMERA_POSITIONS.gardenHome;
+
+  const groundY = heightAt(playerState.position.x, playerState.position.z);
+  const targetPos = {
+    x: playerState.position.x,
+    y: groundY + playerState.eyeHeight,
+    z: playerState.position.z,
+  };
+
+  const forward = forwardFromLook(playerState.yaw, playerState.pitch);
+  const lookAtPoint = {
+    x: targetPos.x + forward.x * 4,
+    y: targetPos.y + forward.y * 4,
+    z: targetPos.z + forward.z * 4,
+  };
 
   gsap.to(camera.position, {
-    x: home.x,
-    y: home.y,
-    z: home.z,
+    x: targetPos.x,
+    y: targetPos.y,
+    z: targetPos.z,
     duration: 1.2,
     ease: "power2.inOut",
-    onUpdate: () => camera.lookAt(home.lookX, home.lookY, home.lookZ),
+    onUpdate: () => camera.lookAt(lookAtPoint.x, lookAtPoint.y, lookAtPoint.z),
     onComplete: () => {
-      if (controls) controls.enabled = true;
+      playerState.movementEnabled = true;
     },
   });
-
-  if (controls) {
-    gsap.to(controls.target, {
-      x: home.lookX,
-      y: home.lookY,
-      z: home.lookZ,
-      duration: 1.2,
-      ease: "power2.inOut",
-    });
-  }
 }
 
 /** Cámara alejándose lentamente para el momento final. */
 export function pullBackForFinale() {
+  playerState.movementEnabled = false;
+  if (typeof document !== "undefined" && document.pointerLockElement) {
+    document.exitPointerLock();
+  }
+
   const camera = cameraController.camera;
-  const controls = cameraController.controls;
-  if (controls) controls.enabled = false;
   if (!camera) return;
   const finale = CAMERA_POSITIONS.finale;
 

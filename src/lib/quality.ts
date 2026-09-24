@@ -10,6 +10,10 @@ export interface QualitySettings {
   petalCount: number;
   /** Cantidad máxima de mariposas simultáneas. */
   butterflyCount: number;
+  /** Arbustos bajos / vegetación silvestre de relleno. */
+  shrubCount: number;
+  /** Piedras y hojas caídas sobre el terreno. */
+  litterCount: number;
   /** Pixel ratio máximo permitido para el canvas. */
   maxDpr: number;
   shadows: boolean;
@@ -23,6 +27,8 @@ export const QUALITY_PRESETS: Record<QualityTier, QualitySettings> = {
     grassCount: 4000,
     petalCount: 60,
     butterflyCount: 5,
+    shrubCount: 70,
+    litterCount: 90,
     maxDpr: 2,
     shadows: true,
     bloom: true,
@@ -33,6 +39,8 @@ export const QUALITY_PRESETS: Record<QualityTier, QualitySettings> = {
     grassCount: 2000,
     petalCount: 36,
     butterflyCount: 3,
+    shrubCount: 42,
+    litterCount: 55,
     maxDpr: 1.5,
     shadows: true,
     bloom: false,
@@ -43,6 +51,8 @@ export const QUALITY_PRESETS: Record<QualityTier, QualitySettings> = {
     grassCount: 800,
     petalCount: 18,
     butterflyCount: 1,
+    shrubCount: 18,
+    litterCount: 22,
     maxDpr: 1,
     shadows: false,
     bloom: false,

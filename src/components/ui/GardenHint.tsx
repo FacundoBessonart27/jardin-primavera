@@ -4,12 +4,16 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { giftConfig } from "@/config/giftConfig";
 import { useExperienceStore } from "@/store/experienceStore";
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice";
 
 /** Pequeño texto de ayuda que aparece al entrar al jardín y se
- * desvanece solo después de unos segundos o en la primera selección. */
+ * desvanece solo después de unos segundos o en la primera selección.
+ * En escritorio menciona el joystick de mira/movimiento; en celular,
+ * el mensaje personalizable de giftConfig (pensado para tap). */
 export function GardenHint() {
   const phase = useExperienceStore((s) => s.phase);
   const selected = useExperienceStore((s) => s.selected);
+  const isTouch = useIsTouchDevice();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -35,7 +39,9 @@ export function GardenHint() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
         >
-          {giftConfig.gardenHint}
+          {isTouch
+            ? giftConfig.gardenHint
+            : "Mirá una flor con la mira y hacé click para descubrirla ✨"}
         </motion.div>
       )}
     </AnimatePresence>

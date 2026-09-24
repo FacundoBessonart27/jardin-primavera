@@ -1,23 +1,19 @@
 import type * as THREE from "three";
 
-interface OrbitControlsLike {
-  enabled: boolean;
-  target: THREE.Vector3;
-  update: () => void;
-}
-
 /**
- * Referencia mutua compartida entre el CameraRig (que vive dentro del
- * <Canvas>) y las animaciones GSAP (que corren fuera del árbol de R3F,
- * en animations/transitions.ts). Evita tener que subir estado de R3F
- * a React sólo para poder animarlo desde afuera.
+ * Referencia mutable compartida entre el CameraRig (que vive dentro
+ * del <Canvas>) y las animaciones GSAP (que corren fuera del árbol de
+ * R3F, en animations/transitions.ts). Evita tener que subir estado de
+ * R3F a React sólo para poder animarlo desde afuera. Durante la
+ * exploración libre, quien mueve la cámara es FirstPersonControls
+ * (ver playerState.ts); durante una transición de GSAP, se pausa
+ * (playerState.movementEnabled = false) y la cámara queda en manos
+ * del tween.
  */
 export const cameraController: {
   camera: THREE.PerspectiveCamera | null;
-  controls: OrbitControlsLike | null;
 } = {
   camera: null,
-  controls: null,
 };
 
 export const CAMERA_POSITIONS = {

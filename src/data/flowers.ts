@@ -17,11 +17,13 @@
 
 export type PetalShape =
   | "round" // pétalos redondeados, tipo rosa/peonía
-  | "pointed" // pétalos alargados y puntiagudos, tipo tulipán/lirio
+  | "pointed" // pétalos alargados y puntiagudos, tipo tulipán
   | "thin" // pétalos finos y numerosos, tipo margarita/caléndula
-  | "trumpet" // forma de trompeta, tipo hibisco/campanilla
-  | "cluster" // muchas florcitas pequeñas agrupadas, tipo lavanda
-  | "ruffled"; // pétalos ondulados, tipo orquídea/dalia
+  | "trumpet" // forma de trompeta, tipo hibisco/lirio
+  | "cluster" // muchas florcitas pequeñas en espiga, tipo lavanda/jacinto
+  | "ruffled" // pétalos ondulados, tipo orquídea/dalia
+  | "fringed" // pétalos densos y festoneados, tipo clavel
+  | "dome"; // muchas florcitas en forma de domo/bola, tipo hortensia
 
 export interface FlowerVisual {
   petalShape: PetalShape;
@@ -40,8 +42,22 @@ export interface FlowerVisual {
   scale: number;
   /** Altura del tallo, en unidades de escena. */
   stemHeight: number;
-  /** Leve variación de color entre instancias del mismo tipo (0 a 1). */
+  /** Variación de color entre instancias del mismo tipo (0 a 1). Cuanto
+   * más alta, más se nota la diferencia de tono entre flores vecinas. */
   colorVariance: number;
+  /** Multiplicador del tamaño del centro (0 lo oculta). Por defecto 1. */
+  centerScale?: number;
+  /** Forma del centro: "sphere" (bocha, por defecto) o "disc" (disco
+   * compacto de florecitas, tipo margarita/caléndula/girasol). */
+  centerShape?: "sphere" | "disc";
+  /** Estambres largos y visibles saliendo del centro (ej: lirio). */
+  stamens?: {
+    count: number;
+    /** Largo relativo a la escala de la flor. */
+    length: number;
+    filamentColor: string;
+    antherColor: string;
+  };
 }
 
 export interface FlowerContent {
@@ -126,6 +142,8 @@ export const flowerSpecies: FlowerSpecies[] = [
       scale: 1.3,
       stemHeight: 1.6,
       colorVariance: 0.05,
+      centerScale: 1.25,
+      centerShape: "disc",
     },
     content: {
       name: "Girasol",
@@ -174,6 +192,13 @@ export const flowerSpecies: FlowerSpecies[] = [
       scale: 1.15,
       stemHeight: 1.0,
       colorVariance: 0.1,
+      centerScale: 0.55,
+      stamens: {
+        count: 2,
+        length: 0.4,
+        filamentColor: "#ff8f8f",
+        antherColor: "#7a0f0f",
+      },
     },
     content: {
       name: "Hibisco",
@@ -193,11 +218,13 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#f5f5f5",
       centerColor: "#f4b400",
       stemColor: "#3f8c5c",
-      petalCount: 16,
+      petalCount: 21,
       layers: 1,
       scale: 0.6,
       stemHeight: 0.85,
-      colorVariance: 0.03,
+      colorVariance: 0.06,
+      centerScale: 1.05,
+      centerShape: "disc",
     },
     content: {
       name: "Margarita",
@@ -241,11 +268,12 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#ff8fb1",
       centerColor: "#7a1f4d",
       stemColor: "#2c6b47",
-      petalCount: 22,
-      layers: 2,
+      petalCount: 30,
+      layers: 3,
       scale: 1.05,
       stemHeight: 1.15,
-      colorVariance: 0.1,
+      colorVariance: 0.12,
+      centerScale: 0.7,
     },
     content: {
       name: "Dalia",
@@ -350,6 +378,86 @@ export const flowerSpecies: FlowerSpecies[] = [
       description:
         "Se abre con el sol y se cierra al anochecer, día tras día, con una constancia silenciosa.",
       romanticLine: "Cada día elijo quererte otra vez, como esta flor elige abrirse cada mañana.",
+    },
+  },
+  {
+    id: "clavel",
+    fieldWeight: 7,
+    visual: {
+      petalShape: "fringed",
+      petalColor: "#ff6f91",
+      petalColorAlt: "#ffd6e0",
+      centerColor: "#c23d63",
+      stemColor: "#5b8f6b",
+      petalCount: 40,
+      layers: 5,
+      scale: 0.78,
+      stemHeight: 1.0,
+      colorVariance: 0.14,
+      centerScale: 0.26,
+    },
+    content: {
+      name: "Clavel",
+      emoji: "🌸",
+      meaning: "Admiración y cariño duradero.",
+      description:
+        "Sus pétalos festoneados, apretados unos contra otros, hacen que parezca una flor hecha de encaje. Sencilla y resistente, dura semanas enteras sin marchitarse.",
+      romanticLine: "Como este clavel, lo que siento por vos no se marchita fácil.",
+    },
+  },
+  {
+    id: "lirio",
+    fieldWeight: 4,
+    visual: {
+      petalShape: "trumpet",
+      petalColor: "#fff1f7",
+      petalColorAlt: "#ffd9ec",
+      centerColor: "#f6d9ec",
+      centerScale: 0.42,
+      stemColor: "#3f8c5c",
+      petalCount: 6,
+      layers: 1,
+      scale: 1.38,
+      stemHeight: 1.48,
+      colorVariance: 0.06,
+      stamens: {
+        count: 6,
+        length: 0.36,
+        filamentColor: "#fdeaf5",
+        antherColor: "#c2703f",
+      },
+    },
+    content: {
+      name: "Lirio",
+      emoji: "🌷",
+      meaning: "Pureza, elegancia y renacimiento.",
+      description:
+        "Alto y señorial, abre sus pétalos hacia atrás dejando ver unos estambres larguísimos. Una de las flores más elegantes de cualquier jardín.",
+      romanticLine: "Hay flores que piden atención a los gritos. Vos y esta, no hace falta: alcanza con estar.",
+    },
+  },
+  {
+    id: "hortensia",
+    fieldWeight: 6,
+    visual: {
+      petalShape: "dome",
+      petalColor: "#7fa8ff",
+      petalColorAlt: "#c9b6ff",
+      centerColor: "#5b6fd6",
+      stemColor: "#3f8c5c",
+      petalCount: 72,
+      layers: 1,
+      scale: 0.92,
+      stemHeight: 0.78,
+      colorVariance: 0.2,
+    },
+    content: {
+      name: "Hortensia",
+      emoji: "💠",
+      meaning: "Gratitud sincera y emociones profundas.",
+      description:
+        "De lejos parece una sola flor redonda, pero mirada de cerca es en realidad un ramillete entero de florcitas diminutas trabajando juntas.",
+      romanticLine: "Como esta hortensia, lo nuestro también es la suma de un montón de pequeñas cosas.",
     },
   },
   // ------------------------------------------------------------
