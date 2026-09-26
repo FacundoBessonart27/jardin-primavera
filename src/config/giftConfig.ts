@@ -87,13 +87,13 @@ export const giftConfig = {
   finalReplayLabel: "Volver a recorrer el jardín",
 
   /**
-   * Sonido (opcional, nunca arranca solo). El botón activa un ambiente
-   * muy suave generado en el navegador (brisa y campanitas al descubrir
-   * flores) y, si agregaste un archivo en /public/audio, también la
-   * música.
+   * Sonido (nunca arranca solo): se enciende al tocar "entrar" al
+   * jardín y se puede apagar/prender con el botón de sonido. Incluye la
+   * música de este archivo y un ambiente suave generado en el navegador
+   * (brisa y campanitas al descubrir flores).
    */
   music: {
-    /** Ruta del archivo de audio dentro de /public. Podés reemplazarlo. */
+    /** Ruta del archivo de audio dentro de /public (debe existir). Podés reemplazarlo. */
     src: "/audio/ambient.mp3",
     /** Volumen inicial (0 a 1). */
     volume: 0.35,

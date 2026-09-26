@@ -52,8 +52,15 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # El entorno "github-pages" que GitHub creó automáticamente sólo
+    # permite publicar desde la rama por defecto del repo (que no es
+    # main), y rechazaba los deploys de main con "Branch main is not
+    # allowed to deploy to github-pages due to environment protection
+    # rules". deploy-pages admite otro nombre de entorno, así que se usa
+    # uno propio sin esa restricción; el workflow igual sólo corre en
+    # pushes a main o a mano desde Actions.
     environment:
-      name: github-pages
+      name: pages-main
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Publicar en GitHub Pages

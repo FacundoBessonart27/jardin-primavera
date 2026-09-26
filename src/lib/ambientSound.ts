@@ -1,14 +1,22 @@
 /**
- * Ambiente sonoro generado en el navegador (Web Audio), sin archivos:
- *  - una brisa muy suave (ruido "marrón" filtrado) con ráfagas lentas
- *    y un susurro de hojas todavía más bajo;
+ * Todo el sonido de la experiencia, en un solo lugar:
+ *  - la música ambiental (public/audio/ambient.mp3), en un único
+ *    <audio> compartido para que nunca suenen dos copias a la vez;
+ *  - una brisa muy suave generada en el navegador (Web Audio, ruido
+ *    "marrón" filtrado) con ráfagas lentas y un susurro de hojas;
  *  - campanitas breves al tocar una flor, al descubrir una flor con
  *    mensaje y al encontrar la flor especial.
  *
- * Nunca suena solo: se activa únicamente desde el botón de sonido (un
- * gesto de la persona, requisito de los navegadores móviles). Al
- * apagarlo, el contexto de audio se suspende para no gastar batería.
+ * Nunca suena solo: se activa desde un gesto de la persona (el botón
+ * de entrada al jardín o el botón de sonido), requisito de los
+ * navegadores para reproducir audio. Si aun así el navegador lo
+ * bloquea, se reintenta en el siguiente toque/tecla. Al apagarlo, la
+ * música se pausa y el contexto de audio se suspende para no gastar
+ * batería.
  */
+
+import { giftConfig } from "@/config/giftConfig";
+import { withBasePath } from "./basePath";
 
 type ChimeKind = "select" | "discover" | "special" | "finale";
 
@@ -16,6 +24,9 @@ let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let enabled = false;
 let suspendTimer = 0;
+let music: HTMLAudioElement | null = null;
+let musicFadeRaf = 0;
+let retryArmed = false;
 
 function createBrownNoise(context: AudioContext, seconds: number): AudioBuffer {
   const length = Math.floor(context.sampleRate * seconds);
@@ -82,17 +93,90 @@ function ensureContext(): boolean {
   return true;
 }
 
-/** Enciende o apaga el ambiente (con un fundido suave). Llamarlo desde
- * el manejador del click/tap para que los navegadores lo permitan. */
+/** El único <audio> de música de toda la app (se crea la primera vez). */
+function getMusic(): HTMLAudioElement | null {
+  if (music) return music;
+  if (typeof window === "undefined" || !giftConfig.music.src) return null;
+  // withBasePath: en GitHub Pages el archivo vive en /jardin-primavera/audio/...
+  music = new Audio(withBasePath(giftConfig.music.src));
+  music.loop = true;
+  music.preload = "auto";
+  music.volume = 0;
+  return music;
+}
+
+/** Fundido de volumen por tiempo. En iOS `volume` es de sólo lectura:
+ * ahí el fundido no tiene efecto, pero la pausa final igual ocurre. */
+function fadeMusic(target: number, seconds: number) {
+  const audio = music;
+  if (!audio) return;
+  cancelAnimationFrame(musicFadeRaf);
+  const from = audio.volume;
+  const start = performance.now();
+  const step = (now: number) => {
+    const k = Math.min(1, (now - start) / (seconds * 1000));
+    audio.volume = Math.min(1, Math.max(0, from + (target - from) * k));
+    if (k < 1) {
+      musicFadeRaf = requestAnimationFrame(step);
+    } else if (target === 0 && !enabled) {
+      audio.pause();
+    }
+  };
+  musicFadeRaf = requestAnimationFrame(step);
+}
+
+/** Si el navegador bloqueó la reproducción, vuelve a intentarlo en el
+ * próximo gesto de la persona (toque, click o tecla). */
+function retryOnNextGesture() {
+  if (retryArmed || typeof window === "undefined") return;
+  retryArmed = true;
+  const events = ["pointerdown", "touchend", "keydown"] as const;
+  const retry = () => {
+    events.forEach((type) => window.removeEventListener(type, retry, true));
+    retryArmed = false;
+    if (!enabled) return;
+    if (ctx) void ctx.resume().catch(() => {});
+    startMusic();
+  };
+  events.forEach((type) => window.addEventListener(type, retry, true));
+}
+
+function startMusic() {
+  const audio = getMusic();
+  if (!audio) return;
+  const attempt = audio.play();
+  if (!attempt) return;
+  attempt
+    .then(() => {
+      if (enabled) fadeMusic(giftConfig.music.volume, 2.5);
+      else audio.pause();
+    })
+    .catch((error: unknown) => {
+      // NotAllowedError = política de autoplay: no es un error, se
+      // reintenta con el próximo gesto. Otros casos (p. ej. una pausa
+      // que interrumpió el play) no requieren hacer nada.
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
+        retryOnNextGesture();
+      }
+    });
+}
+
+/** Enciende o apaga todo el sonido (música + brisa, con un fundido
+ * suave). Llamarlo desde el manejador del click/tap para que los
+ * navegadores lo permitan. */
 export function setSoundEnabled(on: boolean) {
   enabled = on;
   if (on) {
+    // La música primero: play() tiene que ocurrir dentro del gesto.
+    startMusic();
     if (!ensureContext() || !ctx || !master) return;
     window.clearTimeout(suspendTimer);
-    void ctx.resume();
+    void ctx.resume().catch(() => retryOnNextGesture());
     master.gain.cancelScheduledValues(ctx.currentTime);
     master.gain.setTargetAtTime(0.9, ctx.currentTime, 0.8);
-  } else if (ctx && master) {
+  } else {
+    fadeMusic(0, 0.8);
+    if (!ctx || !master) return;
     const context = ctx;
     master.gain.cancelScheduledValues(context.currentTime);
     master.gain.setTargetAtTime(0, context.currentTime, 0.3);

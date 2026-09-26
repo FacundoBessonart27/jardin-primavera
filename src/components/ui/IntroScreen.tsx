@@ -5,6 +5,7 @@ import { giftConfig } from "@/config/giftConfig";
 import { useExperienceStore } from "@/store/experienceStore";
 import { playEnterGardenTransition } from "@/animations/transitions";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { setSoundEnabled } from "@/lib/ambientSound";
 
 export function IntroScreen() {
   const phase = useExperienceStore((s) => s.phase);
@@ -13,6 +14,13 @@ export function IntroScreen() {
   if (phase !== "intro") return null;
 
   const handleEnter = () => {
+    // El toque de "entrar" es el gesto que habilita el audio en los
+    // navegadores: la música y la brisa arrancan acá.
+    const { musicEnabled, setMusicEnabled } = useExperienceStore.getState();
+    if (!musicEnabled) {
+      setSoundEnabled(true);
+      setMusicEnabled(true);
+    }
     playEnterGardenTransition(prefersReducedMotion);
   };
 

@@ -42,14 +42,14 @@ src/
     flowers/               → Generador procedural de geometría + showcase 3D
     ui/                    → Pantallas e interfaz (intro, panel de flor,
                              flor especial, pantalla final, música)
-  hooks/                  → Calidad gráfica por dispositivo, reduced-motion, audio
+  hooks/                  → Calidad gráfica por dispositivo, reduced-motion
   store/                  → Estado global (Zustand)
   animations/             → Timelines de cámara (GSAP)
-  lib/                    → Utilidades (random determinístico, easing,
+  lib/                    → Utilidades (sonido en ambientSound.ts, random determinístico, easing,
                              texturas procedurales, control de cámara,
                              basePath.ts para assets en GitHub Pages)
 public/
-  audio/                  → Música ambiental opcional (ver instrucciones adentro)
+  audio/ambient.mp3       → Música ambiental (loop original de 48 s, reemplazable)
   .nojekyll               → Evita que GitHub Pages ignore la carpeta _next/
 next.config.mjs           → output:"export" + basePath/assetPrefix para GH Pages
 ```
@@ -109,15 +109,22 @@ sin tener que simular la ruta de GitHub Pages.
 
 ## Sonido y música
 
-El botón "🔊 Sonido" (esquina inferior derecha) nunca reproduce nada por su
-cuenta. Al tocarlo activa un ambiente muy suave generado en el navegador
-(brisa y campanitas al descubrir flores, sin archivos de audio). Si además
-querés música:
+El sonido nunca arranca solo: empieza cuando la persona toca el botón de
+entrada al jardín (un gesto del usuario, que es lo que los navegadores
+exigen para reproducir audio) y se puede apagar o volver a prender con el
+botón "🔊 Sonido" (esquina inferior derecha). Incluye:
 
-1. Conseguí un archivo con licencia adecuada para uso personal.
-2. Guardalo como `public/audio/ambient.mp3`.
-3. Listo — el mismo botón la activa/pausa junto con el ambiente. Si el
-   archivo no existe, simplemente suena sólo el ambiente.
+- **Música**: `public/audio/ambient.mp3`, un loop ambiental original de
+  48 s (compuesto por código para este proyecto, sin problemas de
+  licencia). Se reproduce en un único `<audio>` compartido, así que nunca
+  suenan dos copias a la vez.
+- **Ambiente**: una brisa muy suave y campanitas al descubrir flores,
+  generadas en el navegador (Web Audio).
+
+Si el navegador bloquea la reproducción, se reintenta automáticamente en
+el siguiente toque o tecla. Para usar otra música, reemplazá
+`public/audio/ambient.mp3` por un archivo con licencia adecuada (mismo
+nombre) o cambiá `music.src` en `src/config/giftConfig.ts`.
 
 ## Rendimiento y calidad gráfica
 
@@ -221,9 +228,9 @@ sirven desde la raíz del dominio) — avisame y ajusto la configuración.
   comparten la misma escena 3D (la cámara simplemente viaja de una posición
   a otra), así no hay una recarga entre "pantalla 1" y "el jardín" — es
   una sola experiencia continua, como pediste.
-- **Música**: no incluí un archivo de audio de stock para evitar cualquier
-  duda de licencia; la estructura queda lista para que agregues el que
-  prefieras (ver sección de música arriba).
+- **Música**: en lugar de un archivo de stock (con posibles dudas de
+  licencia) se incluye un loop original generado por código; se puede
+  reemplazar por el que prefieras (ver sección de sonido arriba).
 - **`npm run start` no existe**: con `output: "export"` no hay servidor
   Next.js corriendo en producción (todo es HTML/JS/CSS estático), así que
   `next start` no aplica. Para previsualizar el resultado final localmente
@@ -234,7 +241,7 @@ sirven desde la raíz del dominio) — avisame y ajusto la configuración.
   canvas en tiempo de ejecución), así que no dependen de ninguna ruta de
   archivo — funcionan igual sirviendo desde `/` o desde
   `/jardin-primavera/`. El único archivo estático que el código referencia
-  en tiempo de ejecución es la música opcional (`/audio/ambient.mp3`), que
+  en tiempo de ejecución es la música (`/audio/ambient.mp3`), que
   pasa por el helper `withBasePath()` (`src/lib/basePath.ts`) para
   resolver bien en cualquiera de los dos casos. Las tipografías
   (`next/font/google`) y el ícono (`app/icon.svg`) los resuelve Next.js
@@ -243,5 +250,5 @@ sirven desde la raíz del dominio) — avisame y ajusto la configuración.
 ## Qué revisar antes de regalarlo
 
 - Editá `src/config/giftConfig.ts` con tus propios textos.
-- Si querés, agregá `public/audio/ambient.mp3`.
+- Si querés, reemplazá `public/audio/ambient.mp3` por tu propia música.
 - Probalo en tu celular real (no sólo en la compu) antes de mandarlo.

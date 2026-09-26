@@ -34,7 +34,7 @@ interface ExperienceState {
   completeSpecialReveal: () => void;
   registerMessageFound: (id: string) => void;
   markNudgeShown: () => void;
-  toggleMusic: () => void;
+  setMusicEnabled: (on: boolean) => void;
   reset: () => void;
 }
 
@@ -69,7 +69,7 @@ export const useExperienceStore = create<ExperienceState>((set) => ({
 
   markNudgeShown: () => set({ nudgeShown: true }),
 
-  toggleMusic: () => set((s) => ({ musicEnabled: !s.musicEnabled })),
+  setMusicEnabled: (on) => set({ musicEnabled: on }),
 
   reset: () =>
     set({
