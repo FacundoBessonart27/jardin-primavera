@@ -10,6 +10,8 @@
  *
  * Si alguna vez renombrás el repositorio, actualizá REPO_NAME acá abajo.
  */
+import { existsSync } from "node:fs";
+
 const REPO_NAME = "jardin-primavera";
 const isGithubPagesBuild = process.env.GITHUB_PAGES === "true";
 const basePath = isGithubPagesBuild ? `/${REPO_NAME}` : "";
@@ -42,6 +44,12 @@ const nextConfig = {
   // next/image y next/script.
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
+    // La música es opcional: sólo si el archivo existe al momento del
+    // build el cliente intenta cargarlo. Así, sin ambient.mp3, el botón
+    // de sonido no hace ninguna petición (y no aparece un 404).
+    NEXT_PUBLIC_HAS_AMBIENT_MUSIC: String(
+      existsSync(new URL("./public/audio/ambient.mp3", import.meta.url))
+    ),
   },
 };
 

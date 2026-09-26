@@ -31,10 +31,11 @@ export const giftConfig = {
   gardenHint: "Tocá una flor para descubrirla ✨",
 
   /**
-   * Frases sutiles y aleatorias que pueden aparecer al explorar
-   * algunas flores comunes (no la especial). Se muestran de a una,
-   * pocas veces, para que se sientan como un descubrimiento y no
-   * como algo repetitivo.
+   * Flores con mensaje: hay una flor escondida en el jardín por cada
+   * frase de esta lista (entre 5 y 7 es lo ideal). Son flores comunes,
+   * repartidas lejos unas de otras, que brillan apenas cuando alguien
+   * pasa cerca. Al abrirlas muestran el título y su frase. Podés
+   * cambiar, agregar o quitar frases libremente.
    */
   hiddenWhispers: [
     "Esta me hizo pensar en vos.",
@@ -44,6 +45,16 @@ export const giftConfig = {
     "¿Sabías que todavía no encontré una flor tan bonita como vos?",
     "Cada primavera me acuerda un poco más a vos.",
   ],
+
+  /** Título que acompaña la frase de una flor con mensaje. */
+  messageFlowerTitle: "Encontraste una flor especial 🌸",
+
+  /**
+   * Pista suave que aparece (una sola vez, dentro del panel de una flor
+   * con mensaje) cuando ya se encontraron varias y todavía falta la flor
+   * especial. Dejalo vacío ("") para no mostrar ninguna pista.
+   */
+  specialFlowerNudge: "Dicen que en algún rincón hay una flor que brilla distinto…",
 
   /** Identificador de la flor especial (debe existir en data/flowers.ts). */
   specialFlowerId: "flor-especial",
@@ -75,14 +86,19 @@ export const giftConfig = {
   /** Texto para volver a recorrer el jardín desde la pantalla final. */
   finalReplayLabel: "Volver a recorrer el jardín",
 
-  /** Configuración de música ambiental (opcional). */
+  /**
+   * Sonido (opcional, nunca arranca solo). El botón activa un ambiente
+   * muy suave generado en el navegador (brisa y campanitas al descubrir
+   * flores) y, si agregaste un archivo en /public/audio, también la
+   * música.
+   */
   music: {
     /** Ruta del archivo de audio dentro de /public. Podés reemplazarlo. */
     src: "/audio/ambient.mp3",
     /** Volumen inicial (0 a 1). */
     volume: 0.35,
-    /** Etiqueta del botón de música. */
-    label: "Música",
+    /** Etiqueta del botón de sonido. */
+    label: "Sonido",
   },
 } as const;
 

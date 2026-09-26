@@ -97,8 +97,11 @@ export function GroundLitter({ count }: { count: number }) {
   );
   const leafMaterial = useMemo(
     () =>
+      // El color de cada hoja viene por instancia (setColorAt). Antes se
+      // pedía también color por vértice, que esta geometría no tiene: el
+      // shader lo leía como negro y las hojas se veían como triángulos
+      // oscuros sobre el pasto.
       new THREE.MeshStandardMaterial({
-        vertexColors: true,
         roughness: 0.8,
         side: THREE.DoubleSide,
       }),
@@ -144,8 +147,10 @@ export function GroundLitter({ count }: { count: number }) {
     const mesh = leafMeshRef.current;
     if (!mesh) return;
     leafPlacements.forEach((p, i) => {
-      dummy.position.set(p.x, heightAt(p.x, p.z) + 0.006, p.z);
-      dummy.rotation.set(Math.PI / 2 + p.tilt * 0.3, p.rotY, p.tilt);
+      // La hoja ya está modelada acostada (plano XZ): sólo una leve
+      // inclinación, no un giro de 90° que la dejaba parada.
+      dummy.position.set(p.x, heightAt(p.x, p.z) + 0.01, p.z);
+      dummy.rotation.set(p.tilt * 0.3, p.rotY, p.tilt * 0.3);
       dummy.scale.setScalar(p.scale);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);

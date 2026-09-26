@@ -7,51 +7,62 @@ import { giftConfig } from "@/config/giftConfig";
 import { useExperienceStore } from "@/store/experienceStore";
 import { focusOnFlower, returnToGardenHome } from "@/animations/transitions";
 import { FlowerShowcase } from "@/components/flowers/FlowerShowcase";
+import { playChime } from "@/lib/ambientSound";
 
-const WHISPER_CHANCE = 0.45;
-const MAX_WHISPERS = 5;
+/** Cantidad de flores con mensaje encontradas a partir de la cual, si
+ * todavía falta la flor especial, aparece la pista suave (una sola vez). */
+const NUDGE_AFTER = 3;
 
 export function FlowerInfoPanel() {
   const selected = useExperienceStore((s) => s.selected);
   const selectFlower = useExperienceStore((s) => s.selectFlower);
-  const shownWhisperCount = useExperienceStore((s) => s.shownWhisperCount);
-  const registerWhisperShown = useExperienceStore((s) => s.registerWhisperShown);
-  const markSpecialFound = useExperienceStore((s) => s.markSpecialFound);
+  const registerMessageFound = useExperienceStore((s) => s.registerMessageFound);
+  const markNudgeShown = useExperienceStore((s) => s.markNudgeShown);
 
-  const [whisper, setWhisper] = useState<string | null>(null);
+  const [nudge, setNudge] = useState<string | null>(null);
 
   const species = useMemo(
     () => (selected ? getFlowerById(selected.speciesId) : undefined),
     [selected]
   );
 
+  // Frase propia de las flores con mensaje (ver fieldLayout): sólo esas
+  // pocas flores la tienen, siempre la misma, como un descubrimiento.
+  const message =
+    selected?.messageIndex !== undefined
+      ? giftConfig.hiddenWhispers[selected.messageIndex] ?? null
+      : null;
+
   useEffect(() => {
     if (!selected || selected.isSpecial) {
-      setWhisper(null);
+      setNudge(null);
       return;
     }
 
     focusOnFlower(selected.position);
 
-    if (
-      shownWhisperCount < MAX_WHISPERS &&
-      Math.random() < WHISPER_CHANCE
-    ) {
-      const phrase =
-        giftConfig.hiddenWhispers[
-          shownWhisperCount % giftConfig.hiddenWhispers.length
-        ];
-      setWhisper(phrase);
-      registerWhisperShown();
-    } else {
-      setWhisper(null);
+    const state = useExperienceStore.getState();
+    const isNewDiscovery =
+      message !== null && !state.foundMessageIds.includes(selected.instanceId);
+    playChime(isNewDiscovery ? "discover" : "select");
+
+    if (message !== null) {
+      registerMessageFound(selected.instanceId);
+      const found = useExperienceStore.getState().foundMessageIds.length;
+      if (
+        giftConfig.specialFlowerNudge &&
+        !state.nudgeShown &&
+        !state.foundSpecialFlower &&
+        found >= NUDGE_AFTER
+      ) {
+        setNudge(giftConfig.specialFlowerNudge);
+        markNudgeShown();
+        return;
+      }
     }
+    setNudge(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.instanceId]);
-
-  useEffect(() => {
-    if (selected?.isSpecial) markSpecialFound();
-  }, [selected?.isSpecial, markSpecialFound]);
 
   if (!selected || selected.isSpecial || !species) return null;
 
@@ -108,14 +119,28 @@ export function FlowerInfoPanel() {
           "{species.content.romanticLine}"
         </p>
 
-        {whisper && (
-          <motion.p
-            className="mt-4 rounded-xl bg-white/5 px-3 py-2 text-center text-sm text-gold-200"
-            initial={{ opacity: 0, y: 6 }}
+        {message && (
+          <motion.div
+            className="mt-4 rounded-2xl border border-gold-300/20 bg-white/5 px-4 py-3 text-center"
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
+            transition={{ delay: 0.45, duration: 0.6 }}
           >
-            {whisper}
+            <p className="text-[11px] uppercase tracking-[0.2em] text-gold-300/90">
+              {giftConfig.messageFlowerTitle}
+            </p>
+            <p className="mt-1.5 font-serif text-base italic text-gold-200">{message}</p>
+          </motion.div>
+        )}
+
+        {nudge && (
+          <motion.p
+            className="mt-3 text-center text-xs italic text-white/55"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1.2, duration: 0.8 }}
+          >
+            {nudge}
           </motion.p>
         )}
       </motion.div>

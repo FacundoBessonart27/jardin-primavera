@@ -86,7 +86,7 @@ export function Shrubs({ count }: { count: number }) {
   const placements = useMemo(() => {
     const random = createSeededRandom(4242017);
     const radius = GARDEN_BOUNDARY_RADIUS - 0.6;
-    const list: { x: number; z: number; scale: number; rot: number; phase: number }[] = [];
+    const list: { x: number; y: number; z: number; scale: number; rot: number; phase: number }[] = [];
     for (let i = 0; i < count; i++) {
       const angle = random() * Math.PI * 2;
       const r = Math.sqrt(random()) * radius;
@@ -95,6 +95,8 @@ export function Shrubs({ count }: { count: number }) {
       if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < CLEAR_RADIUS) continue;
       list.push({
         x,
+        // Altura del terreno calculada una sola vez (no en cada frame).
+        y: heightAt(x, z),
         z,
         scale: 0.65 + random() * 0.9,
         rot: random() * Math.PI * 2,
@@ -109,7 +111,7 @@ export function Shrubs({ count }: { count: number }) {
     if (!mesh) return;
     const random = createSeededRandom(909);
     placements.forEach((p, i) => {
-      dummy.position.set(p.x, heightAt(p.x, p.z), p.z);
+      dummy.position.set(p.x, p.y, p.z);
       dummy.rotation.set(0, p.rot, 0);
       dummy.scale.setScalar(p.scale);
       dummy.updateMatrix();
@@ -127,7 +129,7 @@ export function Shrubs({ count }: { count: number }) {
     placements.forEach((p, i) => {
       const sway =
         Math.sin(sceneUniforms.windTime * 0.9 + p.phase) * 0.02 * sceneUniforms.windStrength;
-      dummy.position.set(p.x, heightAt(p.x, p.z), p.z);
+      dummy.position.set(p.x, p.y, p.z);
       dummy.rotation.set(sway, p.rot, sway * 0.6);
       dummy.scale.setScalar(p.scale);
       dummy.updateMatrix();

@@ -63,8 +63,10 @@ src/config/giftConfig.ts
 ```
 
 Ahí podés cambiar: nombre de la persona, textos de la pantalla de apertura,
-el hint del jardín, las frases sutiles que aparecen al explorar flores, el
-título/mensaje de la flor especial, el mensaje final y la música.
+el hint del jardín, las frases de las flores con mensaje (hay una flor
+escondida por cada frase de `hiddenWhispers`, que brilla apenas cuando
+alguien pasa cerca), la pista hacia la flor especial, el título/mensaje de
+la flor especial, el mensaje final y la música.
 
 La información de cada flor (nombre, significado, descripción, frase
 romántica) vive en:
@@ -105,15 +107,17 @@ Como el export local se sirve con basePath, abrí
 `./out`, pero sin basePath — útil para revisar que el build compila bien
 sin tener que simular la ruta de GitHub Pages.
 
-## Música ambiental
+## Sonido y música
 
-El botón "🔊 Música" (esquina inferior derecha) nunca reproduce sonido por
-su cuenta. Para agregar tu propia pista:
+El botón "🔊 Sonido" (esquina inferior derecha) nunca reproduce nada por su
+cuenta. Al tocarlo activa un ambiente muy suave generado en el navegador
+(brisa y campanitas al descubrir flores, sin archivos de audio). Si además
+querés música:
 
 1. Conseguí un archivo con licencia adecuada para uso personal.
 2. Guardalo como `public/audio/ambient.mp3`.
-3. Listo — el botón la activa/pausa al tocarlo. Si el archivo no existe, la
-   experiencia sigue funcionando normalmente, simplemente no suena nada.
+3. Listo — el mismo botón la activa/pausa junto con el ambiente. Si el
+   archivo no existe, simplemente suena sólo el ambiente.
 
 ## Rendimiento y calidad gráfica
 

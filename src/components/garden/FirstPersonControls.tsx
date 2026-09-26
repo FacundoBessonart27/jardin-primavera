@@ -17,6 +17,15 @@ const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0062;
 const MAX_PITCH = 1.35;
 const MAX_DELTA = 1 / 20; // evita saltos si un frame tarda mucho
+/** Qué tan rápido se alcanza la velocidad deseada al empezar a caminar
+ * y al frenar (1/s): pasos que arrancan y se detienen con suavidad, en
+ * vez de moverse o pararse de golpe. */
+const ACCELERATION = 7;
+const DECELERATION = 9;
+/** Joystick: zona muerta y curva de respuesta (más control fino cerca
+ * del centro, velocidad plena al fondo). */
+const JOYSTICK_DEAD_ZONE = 0.08;
+const JOYSTICK_CURVE = 1.35;
 
 const MOVE_KEYS = new Set([
   "KeyW",
@@ -57,6 +66,7 @@ export function FirstPersonControls() {
   const bobTimeRef = useRef(0);
   const hoveredRef = useRef<string | null>(null);
   const eulerRef = useRef(new THREE.Euler(0, 0, 0, "YXZ"));
+  const velocityRef = useRef(new THREE.Vector2());
 
   // Teclado (sólo relevante en escritorio, pero no molesta si se deja
   // activo en touch: nada escucha esas teclas ahí).
@@ -117,7 +127,11 @@ export function FirstPersonControls() {
   }, []);
 
   useFrame((_, rawDelta) => {
-    if (!playerState.movementEnabled) return;
+    if (!playerState.movementEnabled) {
+      // Al retomar el control (cerrar un panel) no queda inercia vieja.
+      velocityRef.current.set(0, 0);
+      return;
+    }
 
     const delta = Math.min(rawDelta, MAX_DELTA);
 
@@ -139,8 +153,15 @@ export function FirstPersonControls() {
     let running = false;
 
     if (isTouch) {
-      moveX = touchInputState.moveX;
-      moveZ = touchInputState.moveZ;
+      const raw = Math.hypot(touchInputState.moveX, touchInputState.moveZ);
+      if (raw > JOYSTICK_DEAD_ZONE) {
+        const shaped = Math.pow(
+          Math.min(1, (raw - JOYSTICK_DEAD_ZONE) / (1 - JOYSTICK_DEAD_ZONE)),
+          JOYSTICK_CURVE
+        );
+        moveX = (touchInputState.moveX / raw) * shaped;
+        moveZ = (touchInputState.moveZ / raw) * shaped;
+      }
     } else {
       const k = keysRef.current;
       if (k.KeyW || k.ArrowUp) moveZ -= 1;
@@ -151,21 +172,20 @@ export function FirstPersonControls() {
     }
 
     const inputLength = Math.hypot(moveX, moveZ);
-    const hasInput = inputLength > 0.05;
+    const hasInput = inputLength > 0.02;
 
+    // Velocidad deseada (en el plano del mundo) según la entrada.
+    let targetX = 0;
+    let targetZ = 0;
     if (hasInput) {
       const nx = moveX / inputLength;
       const nz = moveZ / inputLength;
 
       // En táctil, empujar el joystick más lejos del centro corre
       // (sustituye a Shift, que no existe en el celular).
-      const touchRunFactor = isTouch
-        ? THREE.MathUtils.lerp(1, RUN_MULTIPLIER, THREE.MathUtils.clamp(inputLength, 0, 1))
-        : running
-          ? RUN_MULTIPLIER
-          : 1;
-
-      const speed = WALK_SPEED * touchRunFactor;
+      const speed = isTouch
+        ? WALK_SPEED * THREE.MathUtils.lerp(0.35, RUN_MULTIPLIER, THREE.MathUtils.clamp(inputLength, 0, 1))
+        : WALK_SPEED * (running ? RUN_MULTIPLIER : 1);
 
       const sinY = Math.sin(playerState.yaw);
       const cosY = Math.cos(playerState.yaw);
@@ -174,24 +194,38 @@ export function FirstPersonControls() {
       const rightX = cosY;
       const rightZ = -sinY;
 
-      const dx = (forwardX * -nz + rightX * nx) * speed * delta;
-      const dz = (forwardZ * -nz + rightZ * nx) * speed * delta;
+      targetX = (forwardX * -nz + rightX * nx) * speed;
+      targetZ = (forwardZ * -nz + rightZ * nx) * speed;
+    }
 
+    // Aceleración y frenado suaves (independientes de los fps).
+    const velocity = velocityRef.current;
+    const rate = hasInput ? ACCELERATION : DECELERATION;
+    const blend = 1 - Math.exp(-rate * delta);
+    velocity.x += (targetX - velocity.x) * blend;
+    velocity.y += (targetZ - velocity.y) * blend;
+    const currentSpeed = velocity.length();
+    if (!hasInput && currentSpeed < 0.01) velocity.set(0, 0);
+
+    if (currentSpeed > 0.001) {
       const [cx, cz] = clampToGarden(
-        playerState.position.x + dx,
-        playerState.position.z + dz
+        playerState.position.x + velocity.x * delta,
+        playerState.position.z + velocity.y * delta
       );
       playerState.position.x = cx;
       playerState.position.z = cz;
-
-      bobTimeRef.current += delta * speed * 3.4;
+      bobTimeRef.current += delta * currentSpeed * 3.4;
     }
 
     // --- Cámara: sigue el relieve del terreno, nunca lo atraviesa ---
     const groundY = heightAt(playerState.position.x, playerState.position.z);
-    const bobActive = hasInput && !prefersReducedMotion;
-    const bobY = bobActive ? Math.sin(bobTimeRef.current) * 0.035 : 0;
-    const swayX = bobActive ? Math.sin(bobTimeRef.current * 0.5) * 0.02 : 0;
+    // El balanceo de la caminata crece y se apaga con la velocidad (no
+    // se corta de golpe al soltar la tecla o el joystick).
+    const bobAmount = prefersReducedMotion
+      ? 0
+      : THREE.MathUtils.clamp(currentSpeed / WALK_SPEED, 0, 1.2);
+    const bobY = Math.sin(bobTimeRef.current) * 0.035 * bobAmount;
+    const swayX = Math.sin(bobTimeRef.current * 0.5) * 0.02 * bobAmount;
 
     camera.position.set(
       playerState.position.x + swayX,

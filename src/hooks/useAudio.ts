@@ -4,7 +4,8 @@ import { useEffect, useRef } from "react";
 import { withBasePath } from "@/lib/basePath";
 
 interface UseAudioOptions {
-  src: string;
+  /** `null` = no hay archivo de música: el hook no hace nada. */
+  src: string | null;
   volume: number;
   enabled: boolean;
 }
@@ -12,13 +13,14 @@ interface UseAudioOptions {
 /**
  * Controla un <audio> ambiental opcional. Nunca se reproduce solo:
  * sólo arranca cuando `enabled` pasa a true por una acción del usuario
- * (ver MusicToggle). Si el archivo no existe todavía, falla en
- * silencio para no romper el resto de la experiencia.
+ * (ver MusicToggle). Con `src` en null no crea ningún <audio> ni hace
+ * peticiones de red.
  */
 export function useAudio({ src, volume, enabled }: UseAudioOptions) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
+    if (!src) return;
     const audio = new Audio(withBasePath(src));
     audio.loop = true;
     audio.volume = 0;

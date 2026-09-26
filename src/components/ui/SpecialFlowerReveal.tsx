@@ -8,6 +8,7 @@ import { useExperienceStore } from "@/store/experienceStore";
 import { focusOnFlower, pullBackForFinale } from "@/animations/transitions";
 import { FlowerShowcase } from "@/components/flowers/FlowerShowcase";
 import { CelebrationOverlay } from "./CelebrationOverlay";
+import { playChime } from "@/lib/ambientSound";
 
 export function SpecialFlowerReveal() {
   const selected = useExperienceStore((s) => s.selected);
@@ -16,6 +17,7 @@ export function SpecialFlowerReveal() {
   const completeSpecialReveal = useExperienceStore(
     (s) => s.completeSpecialReveal
   );
+  const markSpecialFound = useExperienceStore((s) => s.markSpecialFound);
   const [celebrating, setCelebrating] = useState(false);
 
   const isOpen = Boolean(selected?.isSpecial);
@@ -23,10 +25,14 @@ export function SpecialFlowerReveal() {
   useEffect(() => {
     if (isOpen && selected) {
       focusOnFlower(selected.position);
+      // Queda registrada como encontrada: deja de "llamar" con su brillo.
+      markSpecialFound();
+      playChime("special");
     }
-  }, [isOpen, selected]);
+  }, [isOpen, selected, markSpecialFound]);
 
   const handleLoveClick = () => {
+    playChime("finale");
     setCelebrating(true);
     completeSpecialReveal();
     pullBackForFinale();

@@ -134,6 +134,7 @@ export function focusOnFlower(position: [number, number, number]) {
 export function returnToGardenHome() {
   const camera = cameraController.camera;
   if (!camera) return;
+  cameraController.finaleSettled = false;
 
   const groundY = heightAt(playerState.position.x, playerState.position.z);
   const targetPos = {
@@ -172,6 +173,7 @@ export function pullBackForFinale() {
   const camera = cameraController.camera;
   if (!camera) return;
   const finale = CAMERA_POSITIONS.finale;
+  cameraController.finaleSettled = false;
 
   gsap.to(camera.position, {
     x: finale.x,
@@ -180,5 +182,8 @@ export function pullBackForFinale() {
     duration: 3.2,
     ease: "power2.inOut",
     onUpdate: () => camera.lookAt(finale.lookX, finale.lookY, finale.lookZ),
+    onComplete: () => {
+      cameraController.finaleSettled = true;
+    },
   });
 }

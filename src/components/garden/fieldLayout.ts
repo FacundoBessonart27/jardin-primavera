@@ -2,6 +2,7 @@ import { regularFlowerSpecies, specialFlower, type FlowerSpecies } from "@/data/
 import { createSeededRandom, weightedIndex } from "@/lib/random";
 import { GARDEN_BOUNDARY_RADIUS, GARDEN_CENTER_Z } from "@/lib/terrain";
 import { CAMERA_POSITIONS } from "@/lib/cameraController";
+import { giftConfig } from "@/config/giftConfig";
 
 export interface FlowerPlacement {
   id: string;
@@ -33,6 +34,9 @@ export interface FlowerPlacement {
    * así que las flores de una misma especie no se ven todas en el
    * mismo estado de apertura. */
   bloomVariant: 0 | 1 | 2;
+  /** Si es una flor con mensaje: índice de su frase en
+   * giftConfig.hiddenWhispers. */
+  messageIndex?: number;
 }
 
 const FIELD_SEED = 20260921;
@@ -41,6 +45,10 @@ const CLEAR_RADIUS = 1.2; // zona despejada alrededor del punto de partida
 /** Parte del total reservada para flores chicas que rellenan huecos
  * alrededor de las demás (mismo presupuesto de flores que antes). */
 const FILLER_SHARE = 0.24;
+
+/** Lugar fijo de la flor especial: escondida entre las demás pero
+ * determinística, para que "encontrarla" sea posible de repetir. */
+export const SPECIAL_FLOWER_POSITION = { x: -2.6, z: -3.4 };
 
 const SPAWN_X = CAMERA_POSITIONS.gardenHome.x;
 const SPAWN_Z = CAMERA_POSITIONS.gardenHome.z;
@@ -200,8 +208,8 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
   const result: FlowerPlacement[] = [];
   // El lugar de la flor especial queda reservado desde el principio: las
   // demás crecen alrededor, pero ninguna encima.
-  const specialX = -2.6;
-  const specialZ = -3.4;
+  const specialX = SPECIAL_FLOWER_POSITION.x;
+  const specialZ = SPECIAL_FLOWER_POSITION.z;
   const placed: Placed[] = [
     { x: specialX, z: specialZ, footprint: 0.45, hero: true, speciesId: specialFlower.id },
   ];
@@ -327,9 +335,10 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
     });
   }
 
-  // La flor especial: posición fija propia, escondida entre las demás
-  // pero determinística (para que "encontrarla" sea posible de repetir).
-  // Mira hacia el punto de partida para que su cara se vea al llegar.
+  assignMessageFlowers(result, giftConfig.hiddenWhispers.length);
+
+  // La flor especial: mira hacia el punto de partida para que su cara se
+  // vea al llegar.
   result.push({
     id: "special-0",
     speciesId: specialFlower.id,
@@ -347,4 +356,49 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
   });
 
   return result;
+}
+
+/**
+ * Elige las flores con mensaje: abiertas, de buen tamaño, lejos del
+ * punto de partida y de la flor especial, bien repartidas por el jardín
+ * (siempre la más alejada de las ya elegidas) y, si se puede, de
+ * especies distintas. Usa su propia semilla para no alterar el resto
+ * de la disposición.
+ */
+function assignMessageFlowers(placements: FlowerPlacement[], count: number) {
+  if (count <= 0) return;
+  const random = createSeededRandom(FIELD_SEED + 1);
+  const candidates = placements.filter((p) => {
+    const [x, , z] = p.position;
+    return (
+      p.bloomVariant === 2 &&
+      p.scaleVariance >= 0.85 &&
+      Math.hypot(x - SPAWN_X, z - SPAWN_Z) > 3.5 &&
+      Math.hypot(x - SPECIAL_FLOWER_POSITION.x, z - SPECIAL_FLOWER_POSITION.z) > 2.5
+    );
+  });
+  if (candidates.length === 0) return;
+
+  const chosen: FlowerPlacement[] = [candidates[Math.floor(random() * candidates.length)]];
+  while (chosen.length < count && chosen.length < candidates.length) {
+    const usedSpecies = new Set(chosen.map((c) => c.speciesId));
+    let best: FlowerPlacement | null = null;
+    let bestScore = -Infinity;
+    for (const c of candidates) {
+      if (chosen.includes(c)) continue;
+      const minDist = Math.min(
+        ...chosen.map((o) => Math.hypot(c.position[0] - o.position[0], c.position[2] - o.position[2]))
+      );
+      const score = minDist * (usedSpecies.has(c.speciesId) ? 0.6 : 1) + random() * 0.8;
+      if (score > bestScore) {
+        bestScore = score;
+        best = c;
+      }
+    }
+    if (!best) break;
+    chosen.push(best);
+  }
+  chosen.forEach((p, i) => {
+    p.messageIndex = i;
+  });
 }

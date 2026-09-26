@@ -11,6 +11,8 @@ export interface SelectedFlower {
   speciesId: string;
   isSpecial: boolean;
   position: [number, number, number];
+  /** Índice del mensaje (giftConfig.hiddenWhispers) si es una flor con mensaje. */
+  messageIndex?: number;
 }
 
 interface ExperienceState {
@@ -19,7 +21,10 @@ interface ExperienceState {
   hoveredInstanceId: string | null;
   foundSpecialFlower: boolean;
   specialRevealDone: boolean;
-  shownWhisperCount: number;
+  /** Flores con mensaje ya descubiertas (ids de instancia). */
+  foundMessageIds: string[];
+  /** La pista hacia la flor especial ya se mostró una vez. */
+  nudgeShown: boolean;
   musicEnabled: boolean;
 
   setPhase: (phase: ExperiencePhase) => void;
@@ -27,7 +32,8 @@ interface ExperienceState {
   setHovered: (id: string | null) => void;
   markSpecialFound: () => void;
   completeSpecialReveal: () => void;
-  registerWhisperShown: () => void;
+  registerMessageFound: (id: string) => void;
+  markNudgeShown: () => void;
   toggleMusic: () => void;
   reset: () => void;
 }
@@ -38,7 +44,8 @@ const initialState = {
   hoveredInstanceId: null as string | null,
   foundSpecialFlower: false,
   specialRevealDone: false,
-  shownWhisperCount: 0,
+  foundMessageIds: [] as string[],
+  nudgeShown: false,
   musicEnabled: false,
 };
 
@@ -55,8 +62,12 @@ export const useExperienceStore = create<ExperienceState>((set) => ({
 
   completeSpecialReveal: () => set({ specialRevealDone: true }),
 
-  registerWhisperShown: () =>
-    set((s) => ({ shownWhisperCount: s.shownWhisperCount + 1 })),
+  registerMessageFound: (id) =>
+    set((s) =>
+      s.foundMessageIds.includes(id) ? s : { foundMessageIds: [...s.foundMessageIds, id] }
+    ),
+
+  markNudgeShown: () => set({ nudgeShown: true }),
 
   toggleMusic: () => set((s) => ({ musicEnabled: !s.musicEnabled })),
 

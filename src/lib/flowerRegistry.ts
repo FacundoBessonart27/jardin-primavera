@@ -48,6 +48,7 @@ export function trySelectPlacement(placement: FlowerPlacement) {
     speciesId: placement.speciesId,
     isSpecial: placement.isSpecial,
     position: [x, heightAt(x, z), z],
+    messageIndex: placement.messageIndex,
   });
 }
 

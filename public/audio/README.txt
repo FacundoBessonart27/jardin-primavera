@@ -9,8 +9,14 @@ Para agregar tu propia música:
    (por ejemplo, pistas libres de derechos de Pixabay Music,
    Free Music Archive con licencia adecuada, o una composición propia).
 2. Guardalo en esta carpeta como: ambient.mp3
-3. Listo. El botón "🔊 Música" en la esquina inferior derecha lo
-   activará cuando la persona lo toque (nunca se reproduce solo).
+3. Listo. El botón "🔊 Sonido" en la esquina inferior derecha lo
+   activará cuando la persona lo toque (nunca se reproduce solo), junto
+   con el ambiente suave (brisa y campanitas) que se genera en el
+   navegador aunque no haya ningún archivo en esta carpeta.
+
+La presencia del archivo se detecta al hacer el build (o al iniciar
+`npm run dev`): después de agregarlo, volvé a correr el build o
+reiniciá el servidor de desarrollo.
 
 Si querés usar otro nombre de archivo o formato, actualizá la ruta en:
 src/config/giftConfig.ts → music.src

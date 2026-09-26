@@ -28,7 +28,9 @@ export function GardenScene({ quality }: { quality: QualitySettings }) {
         intensity={1.55}
         color="#ffd9a0"
         castShadow={quality.shadows}
-        shadow-mapSize={[2048, 2048]}
+        // En calidad media (la mayoría de los celulares) un mapa de sombras
+        // de 1024 alcanza para sombras suaves y cuesta 4 veces menos.
+        shadow-mapSize={quality.tier === "high" ? [2048, 2048] : [1024, 1024]}
         shadow-camera-left={-14}
         shadow-camera-right={14}
         shadow-camera-top={14}

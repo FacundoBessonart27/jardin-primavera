@@ -12,8 +12,12 @@ import type * as THREE from "three";
  */
 export const cameraController: {
   camera: THREE.PerspectiveCamera | null;
+  /** true cuando terminó el alejamiento del final: desde ahí la cámara
+   * "respira" despacio sobre el jardín (ver CameraRig). */
+  finaleSettled: boolean;
 } = {
   camera: null,
+  finaleSettled: false,
 };
 
 export const CAMERA_POSITIONS = {
