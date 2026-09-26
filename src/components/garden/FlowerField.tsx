@@ -11,6 +11,7 @@ import { sceneUniforms } from "@/lib/sceneUniforms";
 import { clamp, easeOutBack } from "@/lib/easing";
 import { createSeededRandom } from "@/lib/random";
 import { heightAt } from "@/lib/terrain";
+import { playerState } from "@/lib/playerState";
 import { registerFlowerMesh, unregisterFlowerMesh, trySelectPlacement } from "@/lib/flowerRegistry";
 
 interface SpeciesGroupProps {
@@ -22,6 +23,7 @@ interface SpeciesGroupProps {
 }
 
 const dummy = new THREE.Object3D();
+const _color = new THREE.Color();
 
 // Dirección (normalizada) de la luz clave de la escena (ver
 // GardenScene: directionalLight en [6, 9, 4]) y su color cálido,
@@ -30,95 +32,114 @@ const dummy = new THREE.Object3D();
 const SSS_LIGHT_DIR = new THREE.Vector3(6, 9, 4).normalize();
 const SSS_LIGHT_COLOR = new THREE.Color("#ffcf8a");
 
+/** Distancia (en el plano) a la que una flor empieza a "notar" al
+ * jugador que se acerca caminando. */
+const PROXIMITY_RADIUS = 1.7;
+
+const windUniforms = {
+  uTime: { value: 0 },
+  uWindStrength: { value: 1 },
+};
+
+let sharedFlowerMaterial: THREE.MeshPhysicalMaterial | null = null;
+
+/**
+ * Material ÚNICO para todas las flores del campo (un solo programa de
+ * shader para todas las especies y variantes):
+ *  - MeshPhysicalMaterial con un "sheen" suave (el brillo aterciopelado
+ *    de los pétalos reales) y un clearcoat muy leve, en vez del aspecto
+ *    plástico de un material mate plano.
+ *  - Subsuperficie liviana: a contraluz, el pétalo deja pasar un poco de
+ *    su propio color.
+ *  - Rugosidad levemente distinta por pieza (atributo horneado).
+ *  - Viento por vértice: el tallo se flexiona con una fase propia de cada
+ *    planta (tomada de su posición, así ninguna se mueve sincronizada con
+ *    la vecina), ráfagas lentas que recorren el campo, y un aleteo sutil
+ *    de pétalos y hojas que mueve las puntas sin despegar las bases.
+ */
+function getFlowerMaterial(): THREE.MeshPhysicalMaterial {
+  if (sharedFlowerMaterial) return sharedFlowerMaterial;
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    vertexColors: true,
+    roughness: 0.52,
+    metalness: 0.02,
+    clearcoat: 0.12,
+    clearcoatRoughness: 0.45,
+    sheen: 0.35,
+    sheenRoughness: 0.55,
+    sheenColor: new THREE.Color("#fff0f5"),
+    side: THREE.DoubleSide,
+  });
+
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uSssLightDir = { value: SSS_LIGHT_DIR };
+    shader.uniforms.uSssColor = { value: SSS_LIGHT_COLOR };
+    shader.uniforms.uTime = windUniforms.uTime;
+    shader.uniforms.uWindStrength = windUniforms.uWindStrength;
+
+    shader.vertexShader =
+      `attribute float aWindPhase;\nattribute float aRoughOffset;\n` +
+      `attribute float aFlex;\nattribute float aBend;\nvarying float vRoughOffset;\n` +
+      `uniform float uTime;\nuniform float uWindStrength;\n` +
+      shader.vertexShader;
+    // Un único reemplazo de `#include <begin_vertex>` (encadenar dos
+    // sobre el mismo token haría que el segundo no encuentre nada).
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <begin_vertex>",
+      `#include <begin_vertex>
+      vRoughOffset = aRoughOffset;
+      #ifdef USE_INSTANCING
+        vec2 plantXZ = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+      #else
+        vec2 plantXZ = vec2(0.0);
+      #endif
+      float plantPhase = dot(plantXZ, vec2(0.61, 0.43));
+      float gust = 0.6 + 0.4 * sin(uTime * 0.45 - dot(plantXZ, vec2(0.22, 0.14)));
+      float windAmp = uWindStrength * gust;
+      float sway = sin(uTime * 1.15 + plantPhase) * 0.03 + sin(uTime * 2.3 + plantPhase * 1.7) * 0.012;
+      transformed.x += sway * windAmp * aBend;
+      transformed.z += cos(uTime * 0.95 + plantPhase * 0.8) * 0.018 * windAmp * aBend;
+      float flutterPhase = aWindPhase + plantPhase;
+      transformed.y += sin(uTime * 3.1 + flutterPhase) * 0.016 * windAmp * aFlex;
+      transformed.x += sin(uTime * 2.4 + flutterPhase * 1.3) * 0.01 * windAmp * aFlex;
+      transformed.z += cos(uTime * 2.7 + flutterPhase * 0.7) * 0.008 * windAmp * aFlex;`
+    );
+
+    shader.fragmentShader =
+      `varying float vRoughOffset;\nuniform vec3 uSssLightDir;\nuniform vec3 uSssColor;\n` +
+      shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <roughnessmap_fragment>",
+      `#include <roughnessmap_fragment>
+      roughnessFactor = clamp(roughnessFactor + vRoughOffset, 0.05, 1.0);`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <output_fragment>",
+      `float sssBack = max(0.0, -dot(normalize(normal), uSssLightDir));
+      float sssTerm = pow(sssBack, 1.6) * 0.4;
+      outgoingLight += sssTerm * diffuseColor.rgb * uSssColor;
+      #include <output_fragment>`
+    );
+  };
+
+  sharedFlowerMaterial = mat;
+  return mat;
+}
+
 function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: SpeciesGroupProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(
     () => getFlowerGeometry(speciesId, visual, "field", bloom),
     [speciesId, visual, bloom]
   );
-  const windTimeUniform = useRef({ value: 0 });
-  const windStrengthUniform = useRef({ value: 0 });
+  const material = useMemo(() => getFlowerMaterial(), []);
 
-  // MeshPhysicalMaterial en vez de Standard: un clearcoat muy sutil le
-  // da a los pétalos un brillo tenue y orgánico (como una superficie
-  // levemente cerosa) en vez del aspecto "plástico" de un material
-  // puramente mate/difuso, sin agregar draw calls ni geometría extra.
-  const material = useMemo(() => {
-    const mat = new THREE.MeshPhysicalMaterial({
-      vertexColors: true,
-      roughness: 0.52,
-      metalness: 0.02,
-      clearcoat: 0.18,
-      clearcoatRoughness: 0.45,
-      side: THREE.DoubleSide,
-    });
-
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uSssLightDir = { value: SSS_LIGHT_DIR };
-      shader.uniforms.uSssColor = { value: SSS_LIGHT_COLOR };
-      shader.uniforms.uTime = windTimeUniform.current;
-      shader.uniforms.uWindStrength = windStrengthUniform.current;
-      shader.uniforms.uStemHeight = { value: visual.stemHeight };
-
-      // Viento por vértice (mismo enfoque que Grass.tsx): cada pieza de
-      // la flor (tallo, pétalo, hoja, estambre...) tiene su propia fase
-      // horneada en `aWindPhase`, así no se mueven todas en bloque como
-      // un único objeto rígido. El tallo (fase 0, y=0 en la base) casi
-      // no se mueve cerca del suelo y flexiona un poco más cerca de la
-      // cabeza floral; los pétalos, por encima de esa altura, además
-      // "revolotean" un poco en Y con su propia fase.
-      shader.vertexShader =
-        `attribute float aWindPhase;\nattribute float aRoughOffset;\nvarying float vRoughOffset;\n` +
-        `uniform float uTime;\nuniform float uWindStrength;\nuniform float uStemHeight;\n` +
-        shader.vertexShader;
-      // Un único reemplazo de `#include <begin_vertex>`: encadenar dos
-      // `.replace()` sobre el mismo token haría que el segundo no
-      // encuentre nada (el primero ya lo consumió), así que el bend de
-      // viento y la variable de rugosidad se inyectan juntos acá.
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-        vRoughOffset = aRoughOffset;
-        float windT = clamp(transformed.y / max(uStemHeight, 0.001), 0.0, 1.5);
-        float stemBend = min(windT, 1.0);
-        stemBend *= stemBend;
-        float sway = sin(uTime * 1.15 + aWindPhase) * 0.03 * uWindStrength * stemBend;
-        float sway2 = sin(uTime * 2.3 + aWindPhase * 1.7) * 0.014 * uWindStrength * stemBend;
-        transformed.x += sway + sway2;
-        transformed.z += cos(uTime * 0.95 + aWindPhase * 0.8) * 0.018 * uWindStrength * stemBend;
-        float aboveHead = clamp(windT - 1.0, 0.0, 1.0);
-        transformed.y += sin(uTime * 3.6 + aWindPhase * 2.1) * 0.01 * uWindStrength * aboveHead;`
-      );
-      shader.fragmentShader =
-        `varying float vRoughOffset;\nuniform vec3 uSssLightDir;\nuniform vec3 uSssColor;\n` +
-        shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <roughnessmap_fragment>",
-        `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(roughnessFactor + vRoughOffset, 0.05, 1.0);`
-      );
-
-      // Simulación liviana de subsuperficie: cuando la luz clave queda
-      // "detrás" de la cara visible de un pétalo (la normal mira en
-      // sentido contrario a la luz), se filtra un poco del propio color
-      // del pétalo, como pasa con pétalos finos a contraluz. Sin texturas
-      // ni pasadas de render extra: sólo un par de líneas más en el
-      // fragment shader que Three.js ya genera para este material.
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <output_fragment>",
-        `float sssBack = max(0.0, -dot(normalize(normal), uSssLightDir));
-        float sssTerm = pow(sssBack, 1.6) * 0.4;
-        outgoingLight += sssTerm * diffuseColor.rgb * uSssColor;
-        #include <output_fragment>`
-      );
-    };
-
-    return mat;
-  }, [visual.stemHeight]);
-
-  const bumpRef = useRef<Float32Array>(
-    new Float32Array(placements.length).fill(1)
-  );
+  const bumpRef = useRef<Float32Array>(new Float32Array(placements.length).fill(1));
+  /** Brillo cálido por flor (0..1): apuntada/seleccionada o cercana. */
+  const glowRef = useRef<Float32Array>(new Float32Array(placements.length));
+  /** Color base de cada instancia (variación natural de tono). */
+  const baseColorsRef = useRef<Float32Array>(new Float32Array(placements.length * 3));
 
   useEffect(() => {
     const mesh = meshRef.current;
@@ -129,6 +150,7 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
     // diferencia de tono entre flores vecinas (más "natural", menos
     // flores clonadas idénticas una al lado de la otra).
     const variance = 0.08 + visual.colorVariance * 0.5;
+    const baseColors = new Float32Array(placements.length * 3);
 
     for (let i = 0; i < placements.length; i++) {
       const p = placements[i];
@@ -141,11 +163,14 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
 
       const brightness = 1 + (random() - 0.5) * variance;
       const warmth = 1 + (random() - 0.5) * variance * 0.6;
-      mesh.setColorAt(
-        i,
-        new THREE.Color(brightness, brightness, brightness * warmth)
-      );
+      baseColors[i * 3] = brightness;
+      baseColors[i * 3 + 1] = brightness;
+      baseColors[i * 3 + 2] = brightness * warmth;
+      mesh.setColorAt(i, _color.setRGB(brightness, brightness, brightness * warmth));
     }
+    baseColorsRef.current = baseColors;
+    glowRef.current = new Float32Array(placements.length);
+    bumpRef.current = new Float32Array(placements.length).fill(1);
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
@@ -157,33 +182,62 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    windTimeUniform.current.value = sceneUniforms.windTime;
-    windStrengthUniform.current.value = sceneUniforms.windStrength;
+    windUniforms.uTime.value = sceneUniforms.windTime;
+    windUniforms.uWindStrength.value = sceneUniforms.windStrength;
 
-    const { hoveredInstanceId, selected, foundSpecialFlower } =
+    const { hoveredInstanceId, selected, foundSpecialFlower, phase } =
       useExperienceStore.getState();
+    const exploring = phase === "garden";
+    const px = playerState.position.x;
+    const pz = playerState.position.z;
+    const glow = glowRef.current;
+    const baseColors = baseColorsRef.current;
+    let colorsChanged = false;
 
     for (let i = 0; i < placements.length; i++) {
       const p = placements[i];
-      const localProgress = clamp(
-        (sceneUniforms.reveal - p.revealThreshold) / 0.22
-      );
+      const localProgress = clamp((sceneUniforms.reveal - p.revealThreshold) / 0.22);
       const revealScale = Math.max(0, easeOutBack(localProgress));
 
       const isHovered = hoveredInstanceId === p.id;
       const isSelected = selected?.instanceId === p.id;
-      const bumpTarget = isSelected ? 1.32 : isHovered ? 1.1 : 1;
+
+      // Cercanía del jugador: las flores junto a las que se camina se
+      // "despiertan" apenas (un poco más grandes y luminosas), muy sutil.
+      let proximity = 0;
+      if (exploring) {
+        const d = Math.hypot(p.position[0] - px, p.position[2] - pz);
+        if (d < PROXIMITY_RADIUS) proximity = 1 - d / PROXIMITY_RADIUS;
+      }
+
+      const bumpTarget = isSelected ? 1.32 : isHovered ? 1.1 : 1 + proximity * 0.035;
       bumpRef.current[i] += (bumpTarget - bumpRef.current[i]) * 0.15;
       const bump = bumpRef.current[i] || 1;
 
+      const glowTarget = isSelected ? 0.35 : isHovered ? 0.28 : proximity * 0.08;
+      const glowNext = glow[i] + (glowTarget - glow[i]) * 0.12;
+      if (Math.abs(glowNext - glow[i]) > 0.0005) {
+        glow[i] = glowNext;
+        const g = 1 + glowNext;
+        mesh.setColorAt(
+          i,
+          _color.setRGB(
+            baseColors[i * 3] * g * (1 + glowNext * 0.1),
+            baseColors[i * 3 + 1] * g,
+            baseColors[i * 3 + 2] * g * (1 - glowNext * 0.15)
+          )
+        );
+        colorsChanged = true;
+      }
+
+      // Balanceo general de la planta (el shader agrega la flexión del
+      // tallo y el aleteo de pétalos y hojas). Una flor apuntada se mece
+      // apenas más, como si reaccionara.
+      const reaction = 1 + glow[i] * 1.2;
       const windSway =
-        Math.sin(sceneUniforms.windTime * 1.4 + p.windPhase) *
-        0.05 *
-        sceneUniforms.windStrength;
+        Math.sin(sceneUniforms.windTime * 1.4 + p.windPhase) * 0.035 * sceneUniforms.windStrength * reaction;
       const windTilt =
-        Math.cos(sceneUniforms.windTime * 1.1 + p.windPhase * 1.3) *
-        0.035 *
-        sceneUniforms.windStrength;
+        Math.cos(sceneUniforms.windTime * 1.1 + p.windPhase * 1.3) * 0.025 * sceneUniforms.windStrength * reaction;
 
       const specialPulse =
         isSpecial && !foundSpecialFlower
@@ -191,22 +245,15 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
           : 1;
 
       const groundY = heightAt(p.position[0], p.position[2]);
-      dummy.position.set(
-        p.position[0],
-        groundY + (isSelected ? 0.06 : 0),
-        p.position[2]
-      );
-      dummy.rotation.set(
-        windTilt + p.leanX,
-        p.rotationY + windSway,
-        windSway * 0.6 + p.leanZ
-      );
+      dummy.position.set(p.position[0], groundY + (isSelected ? 0.06 : 0), p.position[2]);
+      dummy.rotation.set(windTilt + p.leanX, p.rotationY + windSway, windSway * 0.6 + p.leanZ);
       const s = revealScale * p.scaleVariance * bump * specialPulse;
-      dummy.scale.set(s * p.stretch, s, s * p.stretch);
+      dummy.scale.set(s * p.stretch, s * p.heightVar, s * p.stretch);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    if (colorsChanged && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   });
 
   // Con el mouse bloqueado (modo caminar de escritorio), la selección

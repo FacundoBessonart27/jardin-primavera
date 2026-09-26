@@ -22,10 +22,12 @@ const fragmentShader = `
 
   void main() {
     float h = normalize(vWorldPosition + offset).y;
-    float t = max(h, 0.0);
-    vec3 skyMix = mix(midColor, topColor, pow(t, exponent));
-    vec3 horizonMix = mix(bottomColor, midColor, smoothstep(-0.05, 0.35, h));
-    vec3 color = h > 0.28 ? skyMix : horizonMix;
+    // Degradé continuo horizonte → medio → cenit. (Antes se elegía uno
+    // de dos degradés con un corte duro en h = 0.28, lo que dibujaba una
+    // banda oscura con borde marcado en la parte alta de la pantalla.)
+    vec3 horizonMix = mix(bottomColor, midColor, smoothstep(-0.05, 0.28, h));
+    float upper = clamp((h - 0.28) / 0.72, 0.0, 1.0);
+    vec3 color = mix(horizonMix, topColor, pow(upper, exponent));
     gl_FragColor = vec4(color, 1.0);
   }
 `;

@@ -16,14 +16,25 @@
  */
 
 export type PetalShape =
-  | "round" // pétalos redondeados, tipo rosa/peonía
-  | "pointed" // pétalos alargados y puntiagudos, tipo tulipán
-  | "thin" // pétalos finos y numerosos, tipo margarita/caléndula
-  | "trumpet" // forma de trompeta, tipo hibisco/lirio
+  | "round" // pétalos obovados de punta redondeada, tipo rosa/peonía
+  | "pointed" // pétalos ovados de punta aguda, tipo tulipán/dalia
+  | "thin" // lígulas angostas en forma de cinta, tipo margarita/girasol
+  | "trumpet" // pétalos anchos en abanico, tipo hibisco
   | "cluster" // muchas florcitas pequeñas en espiga, tipo lavanda/jacinto
-  | "ruffled" // pétalos ondulados, tipo orquídea/dalia
-  | "fringed" // pétalos densos y festoneados, tipo clavel
-  | "dome"; // muchas florcitas en forma de domo/bola, tipo hortensia
+  | "ruffled" // pétalos ondulados, tipo orquídea
+  | "fringed" // pétalos en cuña con borde aserrado, tipo clavel
+  | "dome" // muchas florcitas en forma de domo/bola, tipo hortensia
+  | "recurved" // tépalos lanceolados que se curvan hacia atrás, tipo lirio
+  | "notched" // pétalos anchos con la punta dentada, tipo cosmos
+  | "star"; // ramillete de florcitas estrelladas, tipo jazmín
+
+/** Forma y disposición de las hojas: cambia mucho la silueta de la
+ * planta aunque la flor sea parecida. */
+export type LeafStyle =
+  | "broad" // hojas ovaladas alternas a lo largo del tallo (rosa, girasol)
+  | "narrow" // hojas lanceoladas finas, más numerosas (lirio, clavel)
+  | "strap" // hojas largas en cinta que nacen de la base (tulipán, jacinto)
+  | "feathery"; // hojas muy divididas, casi como agujas (cosmos)
 
 export interface FlowerVisual {
   petalShape: PetalShape;
@@ -57,7 +68,37 @@ export interface FlowerVisual {
     length: number;
     filamentColor: string;
     antherColor: string;
+    /** Anteras agrupadas sobre una columna central en vez de filamentos
+     * sueltos (ej: hibisco). */
+    column?: boolean;
   };
+  /** Cuánto se inclina la cara de la flor respecto de la vertical, en
+   * radianes (0 = mira al cielo, ~1 = mira de costado como un girasol). */
+  headTilt?: number;
+  /** Multiplicador del ancho de los pétalos respecto de su forma base. */
+  petalWidth?: number;
+  /** Multiplicador de la concavidad transversal de los pétalos. */
+  petalCup?: number;
+  /** Multiplicador del ángulo de apertura de la flor abierta (<1 = más plana). */
+  petalOpen?: number;
+  /** Multiplicador de la curvatura a lo largo del pétalo. */
+  petalCurl?: number;
+  /** Cuánto más cerradas quedan las capas internas (sobrescribe la forma). */
+  petalClosure?: number;
+  /** Multiplicador del grosor del tallo. */
+  stemWidth?: number;
+  /** Profundidad de la muesca central en la punta del pétalo (ej: cerezo). */
+  petalNotch?: number;
+  /** Pétalo inferior más grande y de otro color, tipo labelo de orquídea. */
+  lip?: boolean;
+  /** Estilo de hojas (por defecto "broad"). */
+  leafStyle?: LeafStyle;
+  /** Multiplicador del tamaño de las hojas. */
+  leafScale?: number;
+  /** Multiplicador del largo del cáliz (ej: el tubo largo del clavel). */
+  calyxLength?: number;
+  /** Cantidad de tallos por planta (matas de lavanda, jazmín). Por defecto 1. */
+  clump?: number;
 }
 
 export interface FlowerContent {
@@ -76,23 +117,33 @@ export interface FlowerSpecies {
   fieldWeight: number;
   /** Si es true, sólo aparece una vez y es la flor especial del jardín. */
   isSpecial?: boolean;
+  /** Flor chica que se usa para rellenar huecos alrededor de las demás. */
+  filler?: boolean;
+  /** 0..1: cuánto tienden los ejemplares a mirar hacia el sol (1 = todos
+   * orientados igual, como un campo de girasoles). */
+  sunFacing?: number;
 }
 
 export const flowerSpecies: FlowerSpecies[] = [
   {
     id: "rosa",
-    fieldWeight: 9,
+    fieldWeight: 11,
     visual: {
       petalShape: "round",
       petalColor: "#e0264f",
       petalColorAlt: "#ff5c82",
       centerColor: "#7a1030",
       stemColor: "#2c6b47",
-      petalCount: 10,
+      petalCount: 16,
       layers: 3,
-      scale: 1,
+      scale: 0.95,
       stemHeight: 1.1,
       colorVariance: 0.08,
+      centerScale: 0.45,
+      headTilt: 0.28,
+      petalWidth: 1.05,
+      leafStyle: "broad",
+      leafScale: 0.9,
     },
     content: {
       name: "Rosa",
@@ -110,14 +161,21 @@ export const flowerSpecies: FlowerSpecies[] = [
     visual: {
       petalShape: "pointed",
       petalColor: "#ff5470",
-      petalColorAlt: "#ffd23f",
+      petalColorAlt: "#ff7a8e",
       centerColor: "#c92a4a",
       stemColor: "#2f7a4d",
+      // 3 tépalos externos + 3 internos intercalados: la copa típica.
       petalCount: 6,
-      layers: 1,
-      scale: 0.95,
-      stemHeight: 1.25,
+      layers: 2,
+      scale: 0.85,
+      stemHeight: 1.05,
       colorVariance: 0.15,
+      centerScale: 0.3,
+      headTilt: 0.06,
+      petalWidth: 1.25,
+      petalCup: 1.6,
+      leafStyle: "strap",
+      leafScale: 1.2,
     },
     content: {
       name: "Tulipán",
@@ -130,20 +188,26 @@ export const flowerSpecies: FlowerSpecies[] = [
   },
   {
     id: "girasol",
-    fieldWeight: 5,
+    fieldWeight: 4,
+    sunFacing: 1,
     visual: {
       petalShape: "thin",
       petalColor: "#ffcc33",
       petalColorAlt: "#ffb703",
       centerColor: "#4a2e12",
       stemColor: "#3f8c3f",
-      petalCount: 18,
-      layers: 1,
-      scale: 1.3,
-      stemHeight: 1.6,
+      petalCount: 30,
+      layers: 2,
+      scale: 1.15,
+      stemHeight: 1.7,
       colorVariance: 0.05,
-      centerScale: 1.25,
+      centerScale: 2.3,
       centerShape: "disc",
+      headTilt: 1.0,
+      petalWidth: 1.9,
+      leafStyle: "broad",
+      leafScale: 1.6,
+      stemWidth: 1.9,
     },
     content: {
       name: "Girasol",
@@ -156,10 +220,11 @@ export const flowerSpecies: FlowerSpecies[] = [
   },
   {
     id: "cerezo",
-    fieldWeight: 8,
+    fieldWeight: 7,
+    filler: true,
     visual: {
       petalShape: "round",
-      petalColor: "#ffd6e8",
+      petalColor: "#ffc9e0",
       petalColorAlt: "#ffc0dd",
       centerColor: "#e88aa8",
       stemColor: "#5b3a29",
@@ -168,6 +233,20 @@ export const flowerSpecies: FlowerSpecies[] = [
       scale: 0.55,
       stemHeight: 0.7,
       colorVariance: 0.1,
+      centerScale: 0.35,
+      headTilt: 0.35,
+      petalWidth: 1.25,
+      petalNotch: 0.09,
+      petalOpen: 0.25,
+      petalCurl: 0.35,
+      leafStyle: "broad",
+      leafScale: 0.8,
+      stamens: {
+        count: 11,
+        length: 0.13,
+        filamentColor: "#ffe3ee",
+        antherColor: "#f2c14e",
+      },
     },
     content: {
       name: "Flor de cerezo",
@@ -189,15 +268,23 @@ export const flowerSpecies: FlowerSpecies[] = [
       stemColor: "#2c6b47",
       petalCount: 5,
       layers: 1,
-      scale: 1.15,
+      scale: 1.1,
       stemHeight: 1.0,
       colorVariance: 0.1,
-      centerScale: 0.55,
+      centerScale: 0.4,
+      headTilt: 0.5,
+      petalWidth: 1.7,
+      leafStyle: "broad",
+      leafScale: 1.2,
+      stemWidth: 1.2,
+      // Columna estaminal larga con anteras amarillas agrupadas cerca de
+      // la punta: la silueta más reconocible del hibisco.
       stamens: {
-        count: 2,
-        length: 0.4,
+        count: 12,
+        length: 0.42,
         filamentColor: "#ff8f8f",
-        antherColor: "#7a0f0f",
+        antherColor: "#ffd166",
+        column: true,
       },
     },
     content: {
@@ -212,6 +299,8 @@ export const flowerSpecies: FlowerSpecies[] = [
   {
     id: "margarita",
     fieldWeight: 10,
+    filler: true,
+    sunFacing: 0.45,
     visual: {
       petalShape: "thin",
       petalColor: "#ffffff",
@@ -221,10 +310,14 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalCount: 21,
       layers: 1,
       scale: 0.6,
-      stemHeight: 0.85,
+      stemHeight: 0.8,
       colorVariance: 0.06,
-      centerScale: 1.05,
+      centerScale: 1.25,
       centerShape: "disc",
+      headTilt: 0.35,
+      petalWidth: 1.25,
+      leafStyle: "narrow",
+      leafScale: 0.8,
     },
     content: {
       name: "Margarita",
@@ -244,11 +337,15 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#b39ddb",
       centerColor: "#5b3fa0",
       stemColor: "#6b8f5e",
-      petalCount: 14,
+      petalCount: 36,
       layers: 1,
-      scale: 0.5,
-      stemHeight: 1.05,
+      scale: 0.58,
+      stemHeight: 0.95,
       colorVariance: 0.12,
+      leafStyle: "narrow",
+      leafScale: 0.7,
+      // Una mata de varias espigas, no una espiga suelta.
+      clump: 4,
     },
     content: {
       name: "Lavanda",
@@ -263,17 +360,27 @@ export const flowerSpecies: FlowerSpecies[] = [
     id: "dalia",
     fieldWeight: 5,
     visual: {
-      petalShape: "ruffled",
+      // Dalia decorativa: muchas capas de pétalos agudos y muy
+      // acanalados, más cerrados hacia el centro.
+      petalShape: "pointed",
       petalColor: "#e85d9c",
       petalColorAlt: "#ff8fb1",
       centerColor: "#7a1f4d",
       stemColor: "#2c6b47",
-      petalCount: 30,
-      layers: 3,
-      scale: 1.05,
+      petalCount: 44,
+      layers: 4,
+      scale: 0.95,
       stemHeight: 1.15,
       colorVariance: 0.12,
-      centerScale: 0.7,
+      centerScale: 0.45,
+      headTilt: 0.4,
+      petalWidth: 0.8,
+      petalCup: 2.4,
+      petalOpen: 0.3,
+      petalCurl: 0.5,
+      petalClosure: 0.45,
+      leafStyle: "broad",
+      leafScale: 1.1,
     },
     content: {
       name: "Dalia",
@@ -295,9 +402,16 @@ export const flowerSpecies: FlowerSpecies[] = [
       stemColor: "#3f8c5c",
       petalCount: 24,
       layers: 3,
-      scale: 1.2,
-      stemHeight: 1.05,
+      scale: 1.1,
+      stemHeight: 1.0,
       colorVariance: 0.08,
+      centerScale: 0.4,
+      headTilt: 0.25,
+      petalWidth: 1.15,
+      petalCup: 1.3,
+      leafStyle: "broad",
+      leafScale: 1.2,
+      stemWidth: 1.2,
     },
     content: {
       name: "Peonía",
@@ -310,7 +424,7 @@ export const flowerSpecies: FlowerSpecies[] = [
   },
   {
     id: "orquidea",
-    fieldWeight: 3,
+    fieldWeight: 4,
     visual: {
       petalShape: "ruffled",
       petalColor: "#c084fc",
@@ -319,9 +433,15 @@ export const flowerSpecies: FlowerSpecies[] = [
       stemColor: "#4a7c59",
       petalCount: 6,
       layers: 1,
-      scale: 0.9,
-      stemHeight: 1.3,
+      scale: 0.85,
+      stemHeight: 1.2,
       colorVariance: 0.1,
+      centerScale: 0.35,
+      headTilt: 0.75,
+      petalWidth: 1.2,
+      lip: true,
+      leafStyle: "strap",
+      leafScale: 1.5,
     },
     content: {
       name: "Orquídea",
@@ -341,11 +461,13 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#7c9bff",
       centerColor: "#1f2f8a",
       stemColor: "#3f8c5c",
-      petalCount: 20,
+      petalCount: 24,
       layers: 1,
       scale: 0.7,
-      stemHeight: 1.0,
+      stemHeight: 0.7,
       colorVariance: 0.1,
+      leafStyle: "strap",
+      leafScale: 1.1,
     },
     content: {
       name: "Jacinto",
@@ -365,11 +487,17 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#ffbf69",
       centerColor: "#a85200",
       stemColor: "#3f8c5c",
-      petalCount: 20,
-      layers: 1,
-      scale: 0.65,
-      stemHeight: 0.8,
+      petalCount: 32,
+      layers: 2,
+      scale: 0.62,
+      stemHeight: 0.75,
       colorVariance: 0.08,
+      centerScale: 1.1,
+      centerShape: "disc",
+      headTilt: 0.3,
+      petalWidth: 1.6,
+      leafStyle: "broad",
+      leafScale: 0.8,
     },
     content: {
       name: "Caléndula",
@@ -384,6 +512,8 @@ export const flowerSpecies: FlowerSpecies[] = [
     id: "clavel",
     fieldWeight: 7,
     visual: {
+      // Pompón de pétalos en cuña con el borde aserrado, saliendo de un
+      // cáliz largo y tubular: dos rasgos que ninguna otra especie tiene.
       petalShape: "fringed",
       petalColor: "#ff6f91",
       petalColorAlt: "#ffd6e0",
@@ -391,10 +521,14 @@ export const flowerSpecies: FlowerSpecies[] = [
       stemColor: "#5b8f6b",
       petalCount: 40,
       layers: 5,
-      scale: 0.78,
-      stemHeight: 1.0,
+      scale: 0.72,
+      stemHeight: 0.95,
       colorVariance: 0.14,
-      centerScale: 0.26,
+      centerScale: 0.2,
+      headTilt: 0.22,
+      calyxLength: 3.4,
+      leafStyle: "narrow",
+      leafScale: 1.1,
     },
     content: {
       name: "Clavel",
@@ -407,23 +541,31 @@ export const flowerSpecies: FlowerSpecies[] = [
   },
   {
     id: "lirio",
-    fieldWeight: 4,
+    fieldWeight: 6,
     visual: {
-      petalShape: "trumpet",
-      petalColor: "#fff1f7",
-      petalColorAlt: "#ffd9ec",
-      centerColor: "#f6d9ec",
-      centerScale: 0.42,
+      // Seis tépalos largos (3 + 3 intercalados) que se curvan hacia
+      // atrás desde una garganta en trompeta, con una franja rosada al
+      // centro y estambres largos con anteras alargadas.
+      petalShape: "recurved",
+      petalColor: "#ffffff",
+      petalColorAlt: "#fff4f9",
+      centerColor: "#f28bb8",
+      centerScale: 0.3,
       stemColor: "#3f8c5c",
       petalCount: 6,
-      layers: 1,
-      scale: 1.38,
-      stemHeight: 1.48,
+      layers: 2,
+      scale: 1.1,
+      stemHeight: 1.15,
       colorVariance: 0.06,
+      headTilt: 0.6,
+      petalWidth: 1.1,
+      leafStyle: "narrow",
+      leafScale: 1.3,
+      stemWidth: 1.2,
       stamens: {
         count: 6,
-        length: 0.36,
-        filamentColor: "#fdeaf5",
+        length: 0.4,
+        filamentColor: "#e8f5d0",
         antherColor: "#c2703f",
       },
     },
@@ -445,11 +587,15 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#c9b6ff",
       centerColor: "#5b6fd6",
       stemColor: "#3f8c5c",
-      petalCount: 72,
+      petalCount: 88,
       layers: 1,
       scale: 0.92,
       stemHeight: 0.78,
       colorVariance: 0.2,
+      headTilt: 0.15,
+      leafStyle: "broad",
+      leafScale: 1.7,
+      stemWidth: 1.4,
     },
     content: {
       name: "Hortensia",
@@ -458,6 +604,69 @@ export const flowerSpecies: FlowerSpecies[] = [
       description:
         "De lejos parece una sola flor redonda, pero mirada de cerca es en realidad un ramillete entero de florcitas diminutas trabajando juntas.",
       romanticLine: "Como esta hortensia, lo nuestro también es la suma de un montón de pequeñas cosas.",
+    },
+  },
+  {
+    id: "cosmos",
+    fieldWeight: 6,
+    sunFacing: 0.4,
+    visual: {
+      // Ocho pétalos anchos con la punta dentada, casi planos, sobre
+      // un tallo largo y fino con hojas plumosas: liviano y aireado.
+      petalShape: "notched",
+      petalColor: "#f06aa8",
+      petalColorAlt: "#ffc2dc",
+      centerColor: "#f2b705",
+      stemColor: "#4f8f4a",
+      petalCount: 8,
+      layers: 1,
+      scale: 0.72,
+      stemHeight: 1.3,
+      colorVariance: 0.22,
+      centerScale: 0.95,
+      centerShape: "disc",
+      headTilt: 0.45,
+      leafStyle: "feathery",
+    },
+    content: {
+      name: "Cosmos",
+      emoji: "🌸",
+      meaning: "Armonía, orden y amor tranquilo.",
+      description:
+        "Sus tallos finísimos parecen no poder sostenerla, pero aguantan el viento sin quebrarse. Su nombre viene de la palabra griega para el orden y la armonía del universo.",
+      romanticLine: "Con vos, todo mi pequeño universo encuentra su lugar.",
+    },
+  },
+  {
+    id: "jazmin",
+    fieldWeight: 5,
+    filler: true,
+    visual: {
+      // Mata baja de varios tallos con ramilletes de florcitas blancas
+      // en estrella (pétalos levemente torcidos, como un molinete) y
+      // pimpollos rosados todavía cerrados.
+      petalShape: "star",
+      petalColor: "#fffdf7",
+      petalColorAlt: "#f7b6cf",
+      centerColor: "#f4e3a1",
+      stemColor: "#2f5a37",
+      petalCount: 8,
+      layers: 1,
+      scale: 0.55,
+      stemHeight: 0.48,
+      colorVariance: 0.05,
+      leafStyle: "broad",
+      leafScale: 0.8,
+      stemWidth: 0.65,
+      clump: 3,
+    },
+    content: {
+      name: "Jazmín",
+      emoji: "🤍",
+      meaning: "Amor dulce, sensualidad y cariño sincero.",
+      description:
+        "Sus flores son chiquitas, pero su perfume llena un patio entero, sobre todo al atardecer. Los pimpollos son rosados y recién al abrirse se vuelven blancos.",
+      romanticLine: "Hay presencias que no hacen ruido y aun así lo llenan todo. La tuya es así.",
     },
   },
   // ------------------------------------------------------------
@@ -475,11 +684,15 @@ export const flowerSpecies: FlowerSpecies[] = [
       petalColorAlt: "#ffe9b8",
       centerColor: "#f7b955",
       stemColor: "#3f8c5c",
-      petalCount: 16,
+      petalCount: 18,
       layers: 3,
       scale: 1.1,
       stemHeight: 1.15,
       colorVariance: 0,
+      centerScale: 0.55,
+      headTilt: 0.18,
+      petalOpen: 0.75,
+      leafStyle: "broad",
     },
     content: {
       name: "La flor especial",

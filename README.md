@@ -206,7 +206,7 @@ sirven desde la raíz del dominio) — avisame y ajusto la configuración.
 ## Alternativas y decisiones de diseño
 
 - **Flores procedurales en vez de modelos 3D descargados**: para lograr
-  variedad real (12 especies + flor especial) sin depender de assets
+  variedad real (17 especies + flor especial) sin depender de assets
   externos de licencia incierta ni inflar el peso de la página, cada flor
   se construye combinando geometría paramétrica (pétalos curvos, centro,
   tallo, hojas) en Three.js puro. Es una solución híbrida: no son modelos
