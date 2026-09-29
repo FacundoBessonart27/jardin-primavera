@@ -15,7 +15,7 @@ const cache = new Map<string, THREE.BufferGeometry>();
 export function getFlowerGeometry(
   speciesId: string,
   visual: FlowerVisual,
-  detail: "field" | "showcase",
+  detail: "field" | "showcase" | "far",
   bloom = 1
 ): THREE.BufferGeometry {
   const key = `${speciesId}-${detail}-${bloom}`;

@@ -5,7 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { heightAt } from "@/lib/terrain";
 import { BENCHES, LANTERNS, ROCKS } from "@/lib/gardenPlan";
-import { MeshBuilder } from "@/lib/meshBuilder";
+import { MeshBuilder, createGlowLambert } from "@/lib/meshBuilder";
 import { createSoftDiscTexture } from "@/lib/proceduralTextures";
 import { createSeededRandom } from "@/lib/random";
 import { sceneUniforms } from "@/lib/sceneUniforms";
@@ -20,9 +20,15 @@ const dummy = new THREE.Object3D();
 export const LANTERN_LIGHT_Y = 0.97;
 
 function buildLanternStone(): THREE.BufferGeometry {
+  const b = new MeshBuilder();
+  addLanternStone(b);
+  addLanternGlow(b);
+  return b.build();
+}
+
+function addLanternStone(b: MeshBuilder) {
   const stone = "#9a958c";
   const moss = "#76806a";
-  const b = new MeshBuilder();
   b.cylinder(0.34, 0.37, 0.14, 0, 0, 0, moss, 6);
   b.cylinder(0.1, 0.12, 0.56, 0, 0.14, 0, stone, 8);
   b.cylinder(0.27, 0.22, 0.1, 0, 0.7, 0, stone, 6);
@@ -41,11 +47,11 @@ function buildLanternStone(): THREE.BufferGeometry {
   b.cylinder(0.08, 0.46, 0.22, 0, 1.13, 0, stone, 6);
   b.cylinder(0.46, 0.46, 0.03, 0, 1.13, 0, "#8a857c", 6);
   b.sphere(0.075, 0, 1.4, 0, stone, 1, 1.25, 1);
-  return b.build();
 }
 
-function buildLanternGlow(): THREE.BufferGeometry {
-  return new MeshBuilder().box(0.22, 0.24, 0.22, 0, LANTERN_LIGHT_Y, 0, "#ffffff").build();
+/** La ventana encendida del farol (brilla con luz propia). */
+function addLanternGlow(b: MeshBuilder) {
+  b.add(new THREE.BoxGeometry(0.22, 0.24, 0.22), "#ffffff", new THREE.Matrix4().makeTranslation(0, LANTERN_LIGHT_Y, 0), 1);
 }
 
 // ---------------------------------------------------------------------
@@ -104,39 +110,6 @@ function buildRock(): THREE.BufferGeometry {
   return geo;
 }
 
-function Instanced({
-  geometry,
-  material,
-  items,
-  lift = 0,
-  castShadow = true,
-  scaleY = 1,
-}: {
-  geometry: THREE.BufferGeometry;
-  material: THREE.Material;
-  items: { x: number; z: number; yaw: number; scale: number }[];
-  lift?: number;
-  castShadow?: boolean;
-  scaleY?: number;
-}) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  useEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    items.forEach((it, i) => {
-      dummy.position.set(it.x, heightAt(it.x, it.z) + lift * it.scale, it.z);
-      dummy.rotation.set(0, it.yaw, 0);
-      dummy.scale.set(it.scale, it.scale * scaleY, it.scale);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [items, lift, scaleY]);
-  return (
-    <instancedMesh ref={ref} args={[geometry, material, items.length]} castShadow={castShadow} receiveShadow />
-  );
-}
 
 /** Color cálido de la luz de faroles y linternas. */
 export const WARM_LIGHT = new THREE.Color("#ffc47a");
@@ -148,99 +121,123 @@ export const WARM_LIGHT = new THREE.Color("#ffc47a");
  * casi nada en el celular).
  */
 export function GardenProps({ shadows }: { shadows: boolean }) {
-  const lanternStone = useMemo(() => buildLanternStone(), []);
-  const lanternGlow = useMemo(() => buildLanternGlow(), []);
-  const bench = useMemo(() => buildBench(), []);
-  const rock = useMemo(() => buildRock(), []);
+  // Faroles (piedra + ventana encendida), bancos y rocas horneados en UNA
+  // malla estática con color por vértice: un solo draw call (y uno en el
+  // pase de sombras) para todos los props del jardín.
+  const geometry = useMemo(() => {
+    const lantern = buildLanternStone();
+    const bench = buildBench();
+    const rock = buildRock();
+    const b = new MeshBuilder();
+    const m = new THREE.Matrix4();
+    const place = (it: { x: number; z: number; yaw: number; scale: number }, lift = 0) =>
+      m.compose(
+        new THREE.Vector3(it.x, heightAt(it.x, it.z) + lift * it.scale, it.z),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), it.yaw),
+        new THREE.Vector3(it.scale, it.scale, it.scale)
+      );
+    for (const l of LANTERNS) b.addWithColors(lantern, { matrix: place(l) });
+    for (const bench0 of BENCHES) b.addWithColors(bench, { matrix: place(bench0) });
+    for (const r of ROCKS) b.addWithColors(rock, { matrix: place({ ...r, scale: r.scale * 0.8 }, 0.05) });
+    return b.build();
+  }, []);
+  const material = useMemo(() => createGlowLambert(WARM_LIGHT.clone().multiplyScalar(1.5)), []);
 
-  const materials = useMemo(
-    () => ({
-      stone: new THREE.MeshLambertMaterial({ vertexColors: true }),
-      glow: new THREE.MeshBasicMaterial({ color: WARM_LIGHT.clone().multiplyScalar(1.15), toneMapped: false }),
-      wood: new THREE.MeshLambertMaterial({ vertexColors: true }),
-      rock: new THREE.MeshLambertMaterial({ vertexColors: true }),
-    }),
-    []
-  );
-
-  const rocks = useMemo(
-    () => ROCKS.map((r) => ({ ...r, scale: r.scale * 0.8 })),
-    []
-  );
-
-  return (
-    <group>
-      <Instanced geometry={lanternStone} material={materials.stone} items={LANTERNS} castShadow={shadows} />
-      <Instanced geometry={lanternGlow} material={materials.glow} items={LANTERNS} castShadow={false} />
-      <Instanced geometry={bench} material={materials.wood} items={BENCHES} castShadow={shadows} />
-      <Instanced geometry={rock} material={materials.rock} items={rocks} lift={0.05} castShadow={shadows} />
-      <LanternHalos />
-    </group>
-  );
+  return <mesh geometry={geometry} material={material} castShadow={shadows} receiveShadow />;
 }
 
 // ---------------------------------------------------------------------
 // Halos y charcos de luz
 // ---------------------------------------------------------------------
 
-export interface GlowPoint {
+export interface GlowSpec {
   x: number;
   y: number;
   z: number;
+  /** Tamaño del halo (m). */
+  size: number;
+  color: THREE.Color;
+  opacity: number;
 }
 
-/** Halos aditivos (un único Points) con un parpadeo suave de llama. */
-export function GlowSprites({
-  points,
-  size,
-  color = WARM_LIGHT,
-  opacity = 0.75,
-}: {
-  points: GlowPoint[];
-  size: number;
-  color?: THREE.Color;
-  opacity?: number;
-}) {
-  const materialRef = useRef<THREE.PointsMaterial>(null);
-  const texture = useMemo(() => createSoftDiscTexture(64, "#ffffff"), []);
-  const positions = useMemo(() => {
-    const arr = new Float32Array(points.length * 3);
-    points.forEach((p, i) => arr.set([p.x, p.y, p.z], i * 3));
-    return arr;
-  }, [points]);
+const glowVertex = /* glsl */ `
+  attribute float aSize;
+  attribute vec4 aColor;
+  uniform float uScale;
+  uniform float uFlicker;
+  varying vec4 vColor;
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    gl_PointSize = aSize * uScale / -mvPosition.z;
+    vColor = vec4(aColor.rgb, aColor.a * uFlicker);
+  }
+`;
 
-  useFrame(() => {
-    const m = materialRef.current;
-    if (!m) return;
+const glowFragment = /* glsl */ `
+  uniform sampler2D uMap;
+  varying vec4 vColor;
+  void main() {
+    float a = texture2D(uMap, gl_PointCoord).a * vColor.a;
+    if (a < 0.003) discard;
+    gl_FragColor = vec4(vColor.rgb, a);
+    #include <colorspace_fragment>
+  }
+`;
+
+/**
+ * Todos los halos cálidos (faroles, faroles de papel, shoji) en un único
+ * Points con tamaño y color propios por halo: un solo draw call, con un
+ * parpadeo suave de llama.
+ */
+export function WarmGlows({ glows }: { glows: GlowSpec[] }) {
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(glows.flatMap((g) => [g.x, g.y, g.z]), 3));
+    geo.setAttribute("aSize", new THREE.Float32BufferAttribute(glows.map((g) => g.size), 1));
+    geo.setAttribute(
+      "aColor",
+      new THREE.Float32BufferAttribute(glows.flatMap((g) => [g.color.r, g.color.g, g.color.b, g.opacity]), 4)
+    );
+    return geo;
+  }, [glows]);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: glowVertex,
+        fragmentShader: glowFragment,
+        uniforms: {
+          uMap: { value: createSoftDiscTexture(64, "#ffffff") },
+          uScale: { value: 400 },
+          uFlicker: { value: 1 },
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    []
+  );
+
+  useFrame(({ size, viewport }) => {
     const t = sceneUniforms.windTime;
-    m.opacity = opacity * (0.9 + 0.06 * Math.sin(t * 7.3) + 0.04 * Math.sin(t * 13.1));
+    material.uniforms.uFlicker.value = 0.9 + 0.06 * Math.sin(t * 7.3) + 0.04 * Math.sin(t * 13.1);
+    // Mismo criterio que PointsMaterial con sizeAttenuation.
+    material.uniforms.uScale.value = (size.height * viewport.dpr) / 2;
   });
 
-  if (points.length === 0) return null;
-  return (
-    <points frustumCulled={false}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        ref={materialRef}
-        size={size}
-        map={texture}
-        color={color}
-        transparent
-        opacity={opacity}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-        sizeAttenuation
-        toneMapped={false}
-        fog={false}
-      />
-    </points>
-  );
+  if (glows.length === 0) return null;
+  return <points geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+export interface LightPool {
+  x: number;
+  z: number;
+  radius: number;
+  strength: number;
 }
 
 /** Charcos de luz cálida sobre el suelo (quads aditivos). */
-export function LightPools({ pools }: { pools: { x: number; z: number; radius: number; strength: number }[] }) {
+export function LightPools({ pools }: { pools: LightPool[] }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(() => {
     const g = new THREE.PlaneGeometry(2, 2);
@@ -285,26 +282,19 @@ export function LightPools({ pools }: { pools: { x: number; z: number; radius: n
   return <instancedMesh ref={ref} args={[geometry, material, pools.length]} renderOrder={3} />;
 }
 
-function LanternHalos() {
-  const glows = useMemo<GlowPoint[]>(
-    () =>
-      LANTERNS.map((l) => ({
-        x: l.x,
-        y: heightAt(l.x, l.z) + LANTERN_LIGHT_Y * l.scale,
-        z: l.z,
-      })),
-    []
-  );
-  const pools = useMemo(
-    () => LANTERNS.map((l) => ({ x: l.x, z: l.z, radius: 1.5, strength: 1 })),
-    []
-  );
-  return (
-    <>
-      <GlowSprites points={glows} size={0.95} opacity={0.8} />
-      <LightPools pools={pools} />
-    </>
-  );
+/** Halos y charcos de luz de los faroles de piedra. */
+export function lanternLights(): { glows: GlowSpec[]; pools: LightPool[] } {
+  return {
+    glows: LANTERNS.map((l) => ({
+      x: l.x,
+      y: heightAt(l.x, l.z) + LANTERN_LIGHT_Y * l.scale,
+      z: l.z,
+      size: 0.95,
+      color: WARM_LIGHT,
+      opacity: 0.8,
+    })),
+    pools: LANTERNS.map((l) => ({ x: l.x, z: l.z, radius: 1.5, strength: 1 })),
+  };
 }
 
 // ---------------------------------------------------------------------
@@ -347,9 +337,13 @@ export function Fireflies({
     };
   }, [count, centerX, centerZ, radius]);
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
     const points = pointsRef.current;
     if (!points) return;
+    // Sólo existen cerca del santuario: de lejos ni se ven ni se animan.
+    const near = Math.hypot(camera.position.x - centerX, camera.position.z - centerZ) < radius + 30;
+    if (points.visible !== near) points.visible = near;
+    if (!near) return;
     const t = sceneUniforms.windTime;
     const { seeds, positions, colors } = data;
     for (let i = 0; i < seeds.length; i++) {

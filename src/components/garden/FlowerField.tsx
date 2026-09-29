@@ -26,8 +26,27 @@ interface SpeciesGroupProps {
   centerX: number;
   centerZ: number;
   radius: number;
+  render: FlowerRenderConfig;
+  /**
+   * "near": se dibuja sólo cuando el sector está cerca (geometría completa
+   * de su variante de apertura). "far": sólo cuando está lejos (todas las
+   * variantes del sector juntas, con la geometría liviana). "both": la
+   * flor especial, siempre completa.
+   */
+  role: "near" | "far" | "both";
+}
+
+/** Cómo se dibujan las flores según la calidad (no cambia dónde están
+ * ni cuántas hay: sólo cuánto cuesta dibujarlas). */
+export interface FlowerRenderConfig {
   /** Más allá de esta distancia a la cámara, las flores se ocultan. */
   drawDistance: number;
+  /** Más allá de esta distancia se usa la geometría liviana ("far"). */
+  lodDistance: number;
+  /** Hasta esta distancia las flores proyectan sombra. */
+  shadowDistance: number;
+  /** Material sin "sheen" (calidad baja). */
+  lite: boolean;
 }
 
 const dummy = new THREE.Object3D();
@@ -56,7 +75,10 @@ const windUniforms = {
   uWindStrength: { value: 1 },
 };
 
-let sharedFlowerMaterial: THREE.MeshPhysicalMaterial | null = null;
+const sharedFlowerMaterials: { full: THREE.MeshPhysicalMaterial | null; lite: THREE.MeshStandardMaterial | null } = {
+  full: null,
+  lite: null,
+};
 
 /**
  * Material ÚNICO para todas las flores del campo (un solo programa de
@@ -72,20 +94,30 @@ let sharedFlowerMaterial: THREE.MeshPhysicalMaterial | null = null;
  *    la vecina), ráfagas lentas que recorren el campo, y un aleteo sutil
  *    de pétalos y hojas que mueve las puntas sin despegar las bases.
  */
-function getFlowerMaterial(): THREE.MeshPhysicalMaterial {
-  if (sharedFlowerMaterial) return sharedFlowerMaterial;
+function getFlowerMaterial(lite = false): THREE.MeshStandardMaterial {
+  const cached = lite ? sharedFlowerMaterials.lite : sharedFlowerMaterials.full;
+  if (cached) return cached;
 
-  const mat = new THREE.MeshPhysicalMaterial({
-    vertexColors: true,
-    roughness: 0.52,
-    metalness: 0.02,
-    // Sin clearcoat: con el "sheen" el resultado es visualmente igual y
-    // cada píxel de flor se ahorra un término de iluminación completo.
-    sheen: 0.35,
-    sheenRoughness: 0.55,
-    sheenColor: new THREE.Color("#fff0f5"),
-    side: THREE.DoubleSide,
-  });
+  // Calidad baja: el mismo material pero sin "sheen" (el brillo
+  // aterciopelado), que es lo más caro por píxel en un celular modesto.
+  const mat = lite
+    ? new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.52,
+        metalness: 0.02,
+        side: THREE.DoubleSide,
+      })
+    : new THREE.MeshPhysicalMaterial({
+        vertexColors: true,
+        roughness: 0.52,
+        metalness: 0.02,
+        // Sin clearcoat: con el "sheen" el resultado es visualmente igual y
+        // cada píxel de flor se ahorra un término de iluminación completo.
+        sheen: 0.35,
+        sheenRoughness: 0.55,
+        sheenColor: new THREE.Color("#fff0f5"),
+        side: THREE.DoubleSide,
+      });
 
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uSssLightDir = { value: SSS_LIGHT_DIR };
@@ -138,7 +170,8 @@ function getFlowerMaterial(): THREE.MeshPhysicalMaterial {
     );
   };
 
-  sharedFlowerMaterial = mat;
+  if (lite) sharedFlowerMaterials.lite = mat;
+  else sharedFlowerMaterials.full = mat as THREE.MeshPhysicalMaterial;
   return mat;
 }
 
@@ -155,14 +188,18 @@ function SpeciesGroup({
   centerX,
   centerZ,
   radius,
-  drawDistance,
+  render,
+  role,
 }: SpeciesGroupProps) {
+  const { drawDistance, lodDistance, shadowDistance, lite } = render;
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(
-    () => getFlowerGeometry(speciesId, visual, "field", bloom),
-    [speciesId, visual, bloom]
+    () => getFlowerGeometry(speciesId, visual, role === "far" ? "far" : "field", bloom),
+    [speciesId, visual, bloom, role]
   );
-  const material = useMemo(() => getFlowerMaterial(), []);
+  const material = useMemo(() => getFlowerMaterial(lite), [lite]);
+  const farRef = useRef(false);
+  const frameRef = useRef(Math.floor(Math.random() * 3));
 
   const bumpRef = useRef<Float32Array>(new Float32Array(placements.length).fill(1));
   /** Brillo cálido por flor (0..1): apuntada/seleccionada o cercana. */
@@ -249,12 +286,33 @@ function SpeciesGroup({
     const camX = camera.position.x;
     const camZ = camera.position.z;
     const groupDistance = Math.hypot(centerX - camX, centerZ - camZ) - radius;
-    const inRange = groupDistance < drawDistance;
-    if (mesh.visible !== inRange) mesh.visible = inRange;
-    if (!inRange) return;
+    // Nivel de detalle con histéresis (no alterna en el borde). Todos los
+    // grupos de un mismo sector usan el mismo centro y radio, así la malla
+    // cercana y la lejana siempre coinciden en cuál se ve.
+    const far =
+      role === "both"
+        ? false
+        : farRef.current
+          ? groupDistance > lodDistance - 2
+          : groupDistance > lodDistance;
+    farRef.current = far;
+    const shown = groupDistance < drawDistance && (role === "both" || (role === "far") === far);
+    const justShown = shown && !mesh.visible;
+    if (mesh.visible !== shown) mesh.visible = shown;
+    if (!shown) return;
+    // Sombras sólo para los sectores cercanos.
+    mesh.castShadow = !far && groupDistance < shadowDistance;
 
     const { hoveredInstanceId, selected, foundSpecialFlower, foundMessageIds, phase } =
       useExperienceStore.getState();
+    // Los sectores lejanos se animan cada 3 frames: a esa distancia el
+    // vaivén es imperceptible y el trabajo por frame baja a un tercio.
+    frameRef.current++;
+    // (Siempre se actualiza el frame en que el grupo aparece: así no hay
+    // un parpadeo al pasar de la versión cercana a la lejana.)
+    if (!justShown && far && phase === "garden" && sceneUniforms.reveal >= 1 && frameRef.current % 3 !== 0) {
+      return;
+    }
     const exploring = phase === "garden";
     const t = sceneUniforms.windTime;
     const px = playerState.position.x;
@@ -385,7 +443,6 @@ function SpeciesGroup({
     <instancedMesh
       ref={meshRef}
       args={[geometry, material, placements.length]}
-      castShadow
       receiveShadow
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
@@ -468,82 +525,106 @@ const BLOOM_BY_VARIANT: Record<0 | 1 | 2, number> = { 0: 0.12, 1: 0.55, 2: 1 };
 /** Tamaño (m) de las celdas en que se agrupan las flores: cada celda es
  * su propia malla instanciada, así la cámara descarta las que no ve y
  * las sombras sólo procesan las cercanas. */
-const CHUNK_SIZE = 14;
+const CHUNK_SIZE = 18;
 
-interface Chunk {
+interface Sector {
   key: string;
   speciesIndex: number;
-  variant: 0 | 1 | 2;
   placements: FlowerPlacement[];
+  /** Flores del sector separadas por variante de apertura. */
+  byVariant: Map<0 | 1 | 2, FlowerPlacement[]>;
   centerX: number;
   centerZ: number;
   radius: number;
 }
 
-export function FlowerField({ count, drawDistance }: { count: number; drawDistance: number }) {
+export function FlowerField({ count, render }: { count: number; render: FlowerRenderConfig }) {
   const layout = useMemo(() => generateFieldLayout(count), [count]);
   const allSpecies = useMemo(() => [...regularFlowerSpecies, specialFlower], []);
 
-  const chunks = useMemo(() => {
+  // Un "sector" = una especie dentro de una celda del jardín. De cerca se
+  // dibuja con una malla por variante de apertura (capullo, entreabierta,
+  // abierta); de lejos, con UNA sola malla liviana para todo el sector.
+  const sectors = useMemo(() => {
     const speciesIndex = new Map(allSpecies.map((s, i) => [s.id, i]));
-    const map = new Map<string, Chunk>();
+    const map = new Map<string, Sector>();
     for (const placement of layout) {
       const [x, , z] = placement.position;
       const cell = `${Math.floor(x / CHUNK_SIZE)}_${Math.floor(z / CHUNK_SIZE)}`;
-      const key = `${placement.speciesId}:${placement.bloomVariant}:${cell}`;
-      let chunk = map.get(key);
-      if (!chunk) {
-        chunk = {
+      const key = `${placement.speciesId}:${cell}`;
+      let sector = map.get(key);
+      if (!sector) {
+        sector = {
           key,
           speciesIndex: speciesIndex.get(placement.speciesId) ?? 0,
-          variant: placement.bloomVariant,
           placements: [],
+          byVariant: new Map(),
           centerX: 0,
           centerZ: 0,
           radius: 0,
         };
-        map.set(key, chunk);
+        map.set(key, sector);
       }
-      chunk.placements.push(placement);
+      sector.placements.push(placement);
+      const list = sector.byVariant.get(placement.bloomVariant) ?? [];
+      list.push(placement);
+      sector.byVariant.set(placement.bloomVariant, list);
     }
-    for (const chunk of map.values()) {
+    for (const sector of map.values()) {
       let cx = 0;
       let cz = 0;
-      for (const p of chunk.placements) {
+      for (const p of sector.placements) {
         cx += p.position[0];
         cz += p.position[2];
       }
-      cx /= chunk.placements.length;
-      cz /= chunk.placements.length;
+      cx /= sector.placements.length;
+      cz /= sector.placements.length;
       let r = 0;
-      for (const p of chunk.placements) {
+      for (const p of sector.placements) {
         r = Math.max(r, Math.hypot(p.position[0] - cx, p.position[2] - cz));
       }
-      chunk.centerX = cx;
-      chunk.centerZ = cz;
-      chunk.radius = r + 0.5;
+      sector.centerX = cx;
+      sector.centerZ = cz;
+      sector.radius = r + 0.5;
     }
     return [...map.values()];
   }, [layout, allSpecies]);
 
   return (
     <group>
-      {chunks.map((chunk) => {
-        const species = allSpecies[chunk.speciesIndex];
-        return (
+      {sectors.flatMap((sector) => {
+        const species = allSpecies[sector.speciesIndex];
+        const special = Boolean(species.isSpecial);
+        const common = {
+          speciesId: species.id,
+          visual: species.visual,
+          isSpecial: special,
+          centerX: sector.centerX,
+          centerZ: sector.centerZ,
+          radius: sector.radius,
+          render,
+        };
+        const groups = [...sector.byVariant.entries()].map(([variant, placements]) => (
           <SpeciesGroup
-            key={chunk.key}
-            speciesId={species.id}
-            visual={species.visual}
-            placements={chunk.placements}
-            isSpecial={Boolean(species.isSpecial)}
-            bloom={BLOOM_BY_VARIANT[chunk.variant]}
-            centerX={chunk.centerX}
-            centerZ={chunk.centerZ}
-            radius={chunk.radius}
-            drawDistance={drawDistance}
+            key={`${sector.key}:${variant}`}
+            {...common}
+            placements={placements}
+            bloom={BLOOM_BY_VARIANT[variant]}
+            role={special ? "both" : "near"}
           />
-        );
+        ));
+        if (!special) {
+          groups.push(
+            <SpeciesGroup
+              key={`${sector.key}:far`}
+              {...common}
+              placements={sector.placements}
+              bloom={BLOOM_BY_VARIANT[2]}
+              role="far"
+            />
+          );
+        }
+        return groups;
       })}
       <SpecialFlowerAura />
     </group>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { POND_LEVEL, bridgeDeckHeight, heightAt, streamWaterLevel } from "@/lib/terrain";
@@ -9,6 +9,7 @@ import { SUN_COLOR, SUN_DIRECTION } from "@/lib/sun";
 import { sceneUniforms } from "@/lib/sceneUniforms";
 import { MeshBuilder } from "@/lib/meshBuilder";
 import { createSeededRandom } from "@/lib/random";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 const vertexShader = /* glsl */ `
   attribute float aFlow;
@@ -90,7 +91,9 @@ function buildPondGeometry(): THREE.BufferGeometry {
     pos.setXYZ(i, POND.x + lx * c - lz * s, POND_LEVEL, POND.z + lx * s + lz * c);
   }
   geo.setAttribute("aFlow", new THREE.Float32BufferAttribute(new Float32Array(pos.count), 1));
-  geo.computeVertexNormals();
+  // Mismos atributos que el arroyo, para unir ambos en una sola malla.
+  geo.deleteAttribute("normal");
+  geo.deleteAttribute("uv");
   return geo;
 }
 
@@ -126,44 +129,23 @@ function buildStreamGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-/** Hojas de nenúfar flotando en el estanque. */
-function LilyPads() {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const geometry = useMemo(() => {
-    const g = new THREE.CircleGeometry(0.3, 14, 0.35, Math.PI * 2 - 0.5);
-    g.rotateX(-Math.PI / 2);
-    return g;
-  }, []);
-  const count = 11;
-  useEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    const random = createSeededRandom(5353);
-    const d = new THREE.Object3D();
-    const color = new THREE.Color();
-    for (let i = 0; i < count; i++) {
-      const a = random() * Math.PI * 2;
-      const r = 0.35 + random() * 0.5;
-      d.position.set(
-        POND.x + Math.cos(a) * POND.rx * r,
-        POND_LEVEL + 0.012,
-        POND.z + Math.sin(a) * POND.rz * r
-      );
-      d.rotation.set(0, random() * Math.PI * 2, 0);
-      d.scale.setScalar(0.7 + random() * 0.7);
-      d.updateMatrix();
-      mesh.setMatrixAt(i, d.matrix);
-      mesh.setColorAt(i, color.setHSL(0.27 + random() * 0.05, 0.45, 0.28 + random() * 0.1));
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, []);
-  return (
-    <instancedMesh ref={ref} args={[geometry, undefined, count]} receiveShadow>
-      <meshLambertMaterial side={THREE.DoubleSide} />
-    </instancedMesh>
-  );
+/** Hojas de nenúfar flotando en el estanque (se hornean junto con el
+ * puente: son estáticas y comparten material). */
+function addLilyPads(b: MeshBuilder) {
+  const random = createSeededRandom(5353);
+  const color = new THREE.Color();
+  for (let i = 0; i < 11; i++) {
+    const a = random() * Math.PI * 2;
+    const r = 0.35 + random() * 0.5;
+    const pad = new THREE.CircleGeometry(0.3, 14, 0.35, Math.PI * 2 - 0.5);
+    pad.rotateX(-Math.PI / 2);
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(POND.x + Math.cos(a) * POND.rx * r, POND_LEVEL + 0.012, POND.z + Math.sin(a) * POND.rz * r),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), random() * Math.PI * 2),
+      new THREE.Vector3(1, 1, 1).multiplyScalar(0.7 + random() * 0.7)
+    );
+    b.add(pad, color.setHSL(0.27 + random() * 0.05, 0.45, 0.28 + random() * 0.1).clone(), m);
+  }
 }
 
 /** Puente arqueado de madera con barandas bermellón (estilo japonés). */
@@ -226,6 +208,7 @@ function buildBridge(): THREE.BufferGeometry {
       }
     }
   }
+  addLilyPads(b);
   return b.build();
 }
 
@@ -233,10 +216,13 @@ function buildBridge(): THREE.BufferGeometry {
  * los colores del atardecer y el brillo del sol, sin render extra. */
 export function Water() {
   const material = useMemo(() => makeWaterMaterial(), []);
-  const pond = useMemo(() => buildPondGeometry(), []);
-  const stream = useMemo(() => buildStreamGeometry(), []);
+  // Estanque y arroyo comparten material: una sola malla (un draw call).
+  const water = useMemo(() => mergeGeometries([buildPondGeometry(), buildStreamGeometry()], false)!, []);
   const bridge = useMemo(() => buildBridge(), []);
-  const bridgeMaterial = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true }), []);
+  const bridgeMaterial = useMemo(
+    () => new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+    []
+  );
 
   useFrame(() => {
     material.uniforms.uTime.value = sceneUniforms.windTime;
@@ -248,9 +234,7 @@ export function Water() {
 
   return (
     <group>
-      <mesh geometry={pond} material={material} renderOrder={2} />
-      <mesh geometry={stream} material={material} renderOrder={2} />
-      <LilyPads />
+      <mesh geometry={water} material={material} renderOrder={2} />
       <mesh geometry={bridge} material={bridgeMaterial} castShadow receiveShadow />
     </group>
   );

@@ -4,9 +4,10 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import { PLAZA_LEVEL, PLINTH_TOP, heightAt } from "@/lib/terrain";
 import { PLAZA, SHRINE, TORII } from "@/lib/gardenPlan";
-import { MeshBuilder } from "@/lib/meshBuilder";
+import { MeshBuilder, createGlowLambert } from "@/lib/meshBuilder";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createShojiTexture } from "@/lib/gardenTextures";
-import { GlowSprites, LightPools, WARM_LIGHT, type GlowPoint } from "./GardenProps";
+import { WARM_LIGHT, type GlowSpec, type LightPool } from "./GardenProps";
 
 const VERMILION = "#c9462c";
 const DARK_WOOD = "#3e2a21";
@@ -207,17 +208,21 @@ function buildShrineBody(): THREE.BufferGeometry {
     b.cylinder(0.12, 0.12, 0.06, x, y0 + 1.98, hz + hd + 0.3, "#1f1a18", 10);
     b.cylinder(0.12, 0.12, 0.06, x, y0 + 1.38, hz + hd + 0.3, "#1f1a18", 10);
     b.cylinder(0.012, 0.012, 0.3, x, y0 + 2.04, hz + hd + 0.3, "#1f1a18", 4);
+    // El farol de papel en sí: brilla con luz propia (ver createGlowLambert).
+    b.add(
+      new THREE.SphereGeometry(0.2, 10, 8),
+      "#ffffff",
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(x, y0 + 1.68, hz + hd + 0.3),
+        new THREE.Quaternion(),
+        new THREE.Vector3(1, 1.45, 1)
+      ),
+      1
+    );
   }
   return b.build();
 }
 
-function buildChochin(): THREE.BufferGeometry {
-  const b = new MeshBuilder();
-  const y0 = PLINTH_TOP;
-  const z = SHRINE.hallZ + SHRINE.hallD / 2 + 0.3;
-  for (const s of [-1, 1]) b.sphere(0.2, s * 2.05, y0 + 1.68, z, "#ffffff", 1, 1.45, 1);
-  return b.build();
-}
 
 function buildShojiPanels(): THREE.BufferGeometry {
   const panels: THREE.BufferGeometry[] = [];
@@ -282,6 +287,23 @@ function buildTorii(): THREE.BufferGeometry {
   return b.build();
 }
 
+/** Halos (faroles de papel y shoji) y charcos de luz del santuario. */
+export function shrineLights(): { glows: GlowSpec[]; pools: LightPool[] } {
+  const y0 = PLINTH_TOP;
+  const front = SHRINE.hallZ + SHRINE.hallD / 2;
+  const paper = new THREE.Color("#ff9a5c");
+  return {
+    glows: [
+      ...[-2.05, 2.05].map((x) => ({ x, y: y0 + 1.68, z: front + 0.3, size: 1.3, color: paper, opacity: 0.85 })),
+      ...[-1.75, 0, 1.75].map((x) => ({ x, y: y0 + 1.15, z: front + 0.2, size: 2.8, color: WARM_LIGHT, opacity: 0.38 })),
+    ],
+    pools: [
+      { x: SHRINE.x, z: SHRINE.z + SHRINE.plinthD / 2 + 0.9, radius: 3.6, strength: 0.9 },
+      { x: PLAZA.x, z: PLAZA.z - 1.5, radius: 5, strength: 0.45 },
+    ],
+  };
+}
+
 /**
  * Santuario al final del camino: zócalo de piedra con escalinata, salón
  * de madera bermellón con shoji iluminados desde adentro, techo curvo de
@@ -291,14 +313,27 @@ function buildTorii(): THREE.BufferGeometry {
  * emisivos, halos y charcos de luz.
  */
 export function Shrine({ shadows }: { shadows: boolean }) {
-  const body = useMemo(() => buildShrineBody(), []);
+  // El torii (ya ubicado en su lugar) va unido al cuerpo del santuario:
+  // mismo material, un draw call menos.
+  const body = useMemo(() => {
+    const torii = buildTorii();
+    torii.applyMatrix4(
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(TORII.x, heightAt(TORII.x, TORII.z) - 0.05, TORII.z),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(TORII.dx, TORII.dz)),
+        new THREE.Vector3(1, 1, 1)
+      )
+    );
+    const merged = mergeGeometries([buildShrineBody(), torii], false)!;
+    merged.computeBoundingSphere();
+    return merged;
+  }, []);
   const shoji = useMemo(() => buildShojiPanels(), []);
-  const chochin = useMemo(() => buildChochin(), []);
-  const torii = useMemo(() => buildTorii(), []);
   const materials = useMemo(() => {
     const shojiTex = createShojiTexture();
     return {
-      body: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+      // Los faroles de papel van dentro del cuerpo, con brillo propio.
+      body: createGlowLambert(new THREE.Color("#ff7a45").multiplyScalar(1.4), { side: THREE.DoubleSide }),
       shoji: new THREE.MeshLambertMaterial({
         map: shojiTex,
         emissive: new THREE.Color("#ffae5c"),
@@ -306,51 +341,13 @@ export function Shrine({ shadows }: { shadows: boolean }) {
         emissiveIntensity: 0.95,
         side: THREE.DoubleSide,
       }),
-      chochin: new THREE.MeshBasicMaterial({ color: "#ff7a45", toneMapped: false }),
-      torii: new THREE.MeshLambertMaterial({ vertexColors: true }),
     };
   }, []);
-
-  const toriiY = useMemo(() => heightAt(TORII.x, TORII.z) - 0.05, []);
-  const toriiYaw = Math.atan2(TORII.dx, TORII.dz);
-
-  const glows = useMemo<GlowPoint[]>(() => {
-    const y0 = PLINTH_TOP;
-    const z = SHRINE.hallZ + SHRINE.hallD / 2;
-    return [
-      { x: -2.05, y: y0 + 1.68, z: z + 0.3 },
-      { x: 2.05, y: y0 + 1.68, z: z + 0.3 },
-    ];
-  }, []);
-  const shojiGlows = useMemo<GlowPoint[]>(() => {
-    const y0 = PLINTH_TOP;
-    const z = SHRINE.hallZ + SHRINE.hallD / 2 + 0.2;
-    return [-1.75, 0, 1.75].map((x) => ({ x, y: y0 + 1.15, z }));
-  }, []);
-  const pools = useMemo(
-    () => [
-      { x: SHRINE.x, z: SHRINE.z + SHRINE.plinthD / 2 + 0.9, radius: 3.6, strength: 0.9 },
-      { x: PLAZA.x, z: PLAZA.z - 1.5, radius: 5, strength: 0.45 },
-    ],
-    []
-  );
 
   return (
     <group>
       <mesh geometry={body} material={materials.body} castShadow={shadows} receiveShadow />
       <mesh geometry={shoji} material={materials.shoji} />
-      <mesh geometry={chochin} material={materials.chochin} />
-      <mesh
-        geometry={torii}
-        material={materials.torii}
-        position={[TORII.x, toriiY, TORII.z]}
-        rotation={[0, toriiYaw, 0]}
-        castShadow={shadows}
-        receiveShadow
-      />
-      <GlowSprites points={glows} size={1.3} color={new THREE.Color("#ff9a5c")} opacity={0.85} />
-      <GlowSprites points={shojiGlows} size={2.8} color={WARM_LIGHT} opacity={0.38} />
-      <LightPools pools={pools} />
     </group>
   );
 }

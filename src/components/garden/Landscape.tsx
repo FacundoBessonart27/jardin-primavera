@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { heightAt } from "@/lib/terrain";
@@ -83,28 +83,26 @@ function farTreePlacements(count: number): FarTree[] {
   return list;
 }
 
-function TreeInstances({ geometry, trees }: { geometry: THREE.BufferGeometry; trees: FarTree[] }) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const material = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true }), []);
-  useEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    const color = new THREE.Color();
+/** Todo el bosque lejano (tres tipos de árbol) horneado en una sola
+ * malla estática: un draw call en vez de tres. */
+function FarForest({ trees, geometries }: { trees: FarTree[]; geometries: THREE.BufferGeometry[] }) {
+  const geometry = useMemo(() => {
+    if (trees.length === 0) return null;
+    const b = new MeshBuilder();
     const random = createSeededRandom(trees.length + 11);
-    trees.forEach((t, i) => {
+    const tint = new THREE.Color();
+    for (const t of trees) {
       dummy.position.set(t.x, heightAt(t.x, t.z) - 0.2, t.z);
       dummy.rotation.set(0, t.yaw, 0);
       dummy.scale.set(t.scale, t.scale * (0.9 + random() * 0.3), t.scale);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      mesh.setColorAt(i, color.setScalar(0.8 + random() * 0.35));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [trees]);
-  if (trees.length === 0) return null;
-  return <instancedMesh ref={ref} args={[geometry, material, trees.length]} />;
+      b.addWithColors(geometries[t.kind], { matrix: dummy.matrix.clone(), tint: tint.setScalar(0.8 + random() * 0.35) });
+    }
+    return b.build();
+  }, [trees, geometries]);
+  const material = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true }), []);
+  if (!geometry) return null;
+  return <mesh geometry={geometry} material={material} />;
 }
 
 // ---------------------------------------------------------------------
@@ -201,6 +199,57 @@ function SunsetClouds() {
     });
   }, []);
 
+  // Todas las nubes en una sola malla (antes, un sprite por nube = un
+  // draw call cada una). Cada nube es un quad que mira hacia el centro del
+  // grupo, que a su vez acompaña a la cámara: siempre se ven de frente.
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    const color = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const c of clouds) {
+      const center = new THREE.Vector3(Math.cos(c.a) * c.d, c.y, Math.sin(c.a) * c.d);
+      const forward = center.clone().negate().normalize();
+      const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+      const upv = new THREE.Vector3().crossVectors(forward, right).normalize();
+      color.set(c.tint);
+      const base = positions.length / 3;
+      for (const [x, y] of [
+        [-0.5, -0.5],
+        [0.5, -0.5],
+        [0.5, 0.5],
+        [-0.5, 0.5],
+      ]) {
+        const p = center.clone().addScaledVector(right, x * c.w).addScaledVector(upv, y * c.h);
+        positions.push(p.x, p.y, p.z);
+        uvs.push(x + 0.5, y + 0.5);
+        colors.push(color.r, color.g, color.b, c.opacity);
+      }
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 4));
+    geo.setIndex(indices);
+    return geo;
+  }, [clouds]);
+  const material = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        map: texture,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        fog: false,
+        toneMapped: false,
+      }),
+    [texture]
+  );
+
   useFrame(({ camera }) => {
     const group = groupRef.current;
     if (!group) return;
@@ -211,19 +260,7 @@ function SunsetClouds() {
 
   return (
     <group ref={groupRef}>
-      {clouds.map((c, i) => (
-        <sprite key={i} position={[Math.cos(c.a) * c.d, c.y, Math.sin(c.a) * c.d]} scale={[c.w, c.h, 1]}>
-          <spriteMaterial
-            map={texture}
-            color={c.tint}
-            transparent
-            opacity={c.opacity}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-      ))}
+      <mesh geometry={geometry} material={material} frustumCulled={false} renderOrder={-6} />
     </group>
   );
 }
@@ -309,16 +346,11 @@ export function Landscape({ farTreeCount, birdCount }: { farTreeCount: number; b
   const blossom = useMemo(() => buildRoundTree(["#e6a2b8", "#f0b7c7", "#d98ea9"]), []);
   const conifer = useMemo(() => buildConifer(), []);
   const trees = useMemo(() => farTreePlacements(farTreeCount), [farTreeCount]);
-  const byKind = useMemo(
-    () => [0, 1, 2].map((k) => trees.filter((t) => t.kind === k)),
-    [trees]
-  );
+  const geometries = useMemo(() => [round, conifer, blossom], [round, conifer, blossom]);
 
   return (
     <group>
-      <TreeInstances geometry={round} trees={byKind[0]} />
-      <TreeInstances geometry={conifer} trees={byKind[1]} />
-      <TreeInstances geometry={blossom} trees={byKind[2]} />
+      <FarForest trees={trees} geometries={geometries} />
       <Horizon />
       <SunsetClouds />
       <Birds count={birdCount} />

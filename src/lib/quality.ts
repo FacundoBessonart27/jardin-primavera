@@ -6,6 +6,8 @@ export interface QualitySettings {
   flowerCount: number;
   /** Cantidad de mechones de pasto instanciados. */
   grassCount: number;
+  /** Radio (m) alrededor de la cámara en el que se dibuja el pasto. */
+  grassRadius: number;
   /** Cantidad de pétalos/partículas flotando. */
   petalCount: number;
   /** Cantidad máxima de mariposas simultáneas. */
@@ -16,14 +18,22 @@ export interface QualitySettings {
   litterCount: number;
   /** Distancia (m) hasta la que se dibujan las flores. */
   flowerDrawDistance: number;
+  /** Distancia (m) desde la que las flores usan su geometría liviana. */
+  flowerLodDistance: number;
+  /** Distancia (m) hasta la que las flores proyectan sombra. */
+  flowerShadowDistance: number;
+  /** Material de flores sin "sheen" (más barato por píxel). */
+  flowerLite: boolean;
   /** Pétalos de sakura cayendo de los árboles. */
   sakuraPetalCount: number;
   /** Pétalos caídos sobre el suelo y el camino. */
   groundPetalCount: number;
   /** Árboles del bosque que rodea el valle. */
   farTreeCount: number;
-  /** Tarjetas de flor por racimo en las copas de sakura (1 = completo). */
+  /** Detalle de las copas de sakura cercanas (1 = completo). */
   canopyDetail: number;
+  /** Distancia (m) desde la que un grupo de sakuras usa su versión liviana. */
+  treeLodDistance: number;
   /** Luciérnagas / motas de luz en la zona del santuario. */
   fireflyCount: number;
   /** Aves lejanas en el cielo. */
@@ -31,65 +41,96 @@ export interface QualitySettings {
   /** Pixel ratio máximo permitido para el canvas. */
   maxDpr: number;
   shadows: boolean;
+  /** Sombras suaves (PCF soft) o PCF simple, más barato. */
+  softShadows: boolean;
+  /** Cada cuántos frames se recalcula el mapa de sombras. */
+  shadowInterval: number;
   bloom: boolean;
 }
 
+/**
+ * Los tres niveles cambian el COSTO de dibujar, no el diseño: los
+ * caminos, canteros, sakuras, puente, torii, plaza, flor especial y
+ * santuario están siempre. Lo que varía es el detalle lejano, la
+ * cantidad de partículas, las sombras y la resolución.
+ */
 export const QUALITY_PRESETS: Record<QualityTier, QualitySettings> = {
   high: {
     tier: "high",
     flowerCount: 520,
     grassCount: 9000,
+    grassRadius: 34,
     petalCount: 70,
     butterflyCount: 7,
     shrubCount: 150,
     litterCount: 160,
     flowerDrawDistance: 58,
+    flowerLodDistance: 18,
+    flowerShadowDistance: 16,
+    flowerLite: false,
     sakuraPetalCount: 240,
     groundPetalCount: 1600,
     farTreeCount: 300,
     canopyDetail: 1,
+    treeLodDistance: 30,
     fireflyCount: 36,
     birdCount: 7,
     maxDpr: 2,
     shadows: true,
+    softShadows: true,
+    shadowInterval: 1,
     bloom: true,
   },
   medium: {
     tier: "medium",
     flowerCount: 270,
     grassCount: 4400,
+    grassRadius: 26,
     petalCount: 42,
     butterflyCount: 5,
     shrubCount: 95,
     litterCount: 100,
     flowerDrawDistance: 40,
-    sakuraPetalCount: 140,
+    flowerLodDistance: 13,
+    flowerShadowDistance: 9,
+    flowerLite: false,
+    sakuraPetalCount: 130,
     groundPetalCount: 700,
-    farTreeCount: 190,
-    canopyDetail: 0.5,
-    fireflyCount: 26,
+    farTreeCount: 170,
+    canopyDetail: 0.6,
+    treeLodDistance: 22,
+    fireflyCount: 22,
     birdCount: 5,
-    maxDpr: 1.5,
+    maxDpr: 1.35,
     shadows: true,
+    softShadows: false,
+    shadowInterval: 2,
     bloom: false,
   },
   low: {
     tier: "low",
     flowerCount: 150,
     grassCount: 2200,
+    grassRadius: 20,
     petalCount: 20,
     butterflyCount: 2,
     shrubCount: 45,
     litterCount: 45,
     flowerDrawDistance: 30,
-    sakuraPetalCount: 60,
+    flowerLodDistance: 10,
+    flowerShadowDistance: 0,
+    flowerLite: true,
+    sakuraPetalCount: 50,
     groundPetalCount: 300,
-    farTreeCount: 110,
+    farTreeCount: 100,
     canopyDetail: 0.35,
-    fireflyCount: 14,
+    treeLodDistance: 16,
+    fireflyCount: 12,
     birdCount: 3,
     maxDpr: 1,
     shadows: false,
+    softShadows: false,
+    shadowInterval: 1,
     bloom: false,
   },
 };

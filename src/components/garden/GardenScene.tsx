@@ -17,6 +17,8 @@ import { GardenProps, Fireflies } from "./GardenProps";
 import { Water } from "./Water";
 import { Shrine } from "./Shrine";
 import { CameraRig } from "./CameraRig";
+import { WarmLights } from "./WarmLights";
+import { ShaderWarmup } from "./ShaderWarmup";
 import { SceneTicker } from "./SceneTicker";
 import { PLAZA, SHRINE } from "@/lib/gardenPlan";
 import type { QualitySettings } from "@/lib/quality";
@@ -32,7 +34,11 @@ export function GardenScene({ quality }: { quality: QualitySettings }) {
       <SceneTicker />
       <CameraRig />
 
-      <Atmosphere shadows={quality.shadows} highQuality={quality.tier === "high"} />
+      <Atmosphere
+        shadows={quality.shadows}
+        highQuality={quality.tier === "high"}
+        shadowInterval={quality.shadowInterval}
+      />
       <Sky />
       <Landscape farTreeCount={quality.farTreeCount} birdCount={quality.birdCount} />
 
@@ -41,16 +47,30 @@ export function GardenScene({ quality }: { quality: QualitySettings }) {
       <Water />
 
       <Shrine shadows={quality.shadows} />
-      <SakuraGrove detail={quality.canopyDetail} shadows={quality.shadows} />
+      <SakuraGrove
+        detail={quality.canopyDetail}
+        shadows={quality.shadows}
+        lodDistance={quality.treeLodDistance}
+        cardShadows={quality.tier === "high"}
+      />
       <GardenProps shadows={quality.shadows} />
+      <WarmLights />
 
-      <Grass count={quality.grassCount} windStrength={1} />
+      <Grass count={quality.grassCount} windStrength={1} radius={quality.grassRadius} />
       <Shrubs count={quality.shrubCount} />
       <GroundLitter count={quality.litterCount} />
       <GroundPetals count={quality.groundPetalCount} />
 
       <Suspense fallback={null}>
-        <FlowerField count={quality.flowerCount} drawDistance={quality.flowerDrawDistance} />
+        <FlowerField
+          count={quality.flowerCount}
+          render={{
+            drawDistance: quality.flowerDrawDistance,
+            lodDistance: quality.flowerLodDistance,
+            shadowDistance: quality.shadows ? quality.flowerShadowDistance : 0,
+            lite: quality.flowerLite,
+          }}
+        />
       </Suspense>
 
       <Butterflies count={quality.butterflyCount} />
@@ -62,6 +82,7 @@ export function GardenScene({ quality }: { quality: QualitySettings }) {
         centerZ={(PLAZA.z + SHRINE.z) / 2}
         radius={9}
       />
+      <ShaderWarmup key={quality.tier} />
     </>
   );
 }

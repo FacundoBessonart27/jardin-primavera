@@ -1,24 +1,36 @@
 import * as THREE from "three";
-import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createSeededRandom } from "@/lib/random";
 
 /**
- * Geometría procedural de un cerezo (sakura), en tres piezas que se
- * dibujan instanciadas:
+ * Geometría procedural de un cerezo (sakura), en tres piezas:
  *  - trunk: tronco y ramas (tubos cónicos que se curvan y se abren);
- *  - blobs: el volumen de cada racimo de flores (esferas irregulares);
- *  - cards: tarjetas con textura de flores alrededor de cada racimo,
- *    que le dan a la copa el borde esponjoso y calado de un sakura.
+ *  - canopy: el volumen de las copas, hecho de varios bultos chicos e
+ *    irregulares por racimo (no una esfera por racimo: así la silueta
+ *    es despareja y entre bulto y bulto se ven las ramas);
+ *  - cards: tarjetas con textura de flores en el borde de cada racimo,
+ *    que le dan a la copa el contorno esponjoso y calado.
+ *
+ * Cada árbol usa su propia semilla (todos distintos, ninguno simétrico)
+ * y tiene dos niveles de detalle: "near" para los cercanos y "far", con
+ * menos bultos, tarjetas y ramas finas, para los lejanos.
  *
  * Las ramas principales se estiran más hacia +X local: al plantar el
  * árbol se lo gira para que ese lado mire al camino, y así las copas de
  * ambos lados se encuentran por encima formando un túnel.
  */
 
-export interface SakuraVariant {
-  trunk: THREE.BufferGeometry;
-  blobs: THREE.BufferGeometry;
-  cards: THREE.BufferGeometry;
+export interface GeometryArrays {
+  positions: number[];
+  normals: number[];
+  colors: number[];
+  uvs: number[];
+  indices: number[];
+}
+
+export interface TreeGeometry {
+  trunk: GeometryArrays;
+  canopy: GeometryArrays;
+  cards: GeometryArrays;
   /** Centros (locales) de los racimos: de ahí caen los pétalos. */
   clusters: THREE.Vector3[];
 }
@@ -26,8 +38,10 @@ export interface SakuraVariant {
 const BARK_DARK = new THREE.Color("#3b2a27");
 const BARK_LIGHT = new THREE.Color("#6d5048");
 // Multiplican la textura de flores: sombra suave abajo, luz arriba.
-const BLOSSOM_DEEP = new THREE.Color("#b98a98");
+const BLOSSOM_SHADE = new THREE.Color("#c893a3");
 const BLOSSOM_LIGHT = new THREE.Color("#ffffff");
+
+const emptyArrays = (): GeometryArrays => ({ positions: [], normals: [], colors: [], uvs: [], indices: [] });
 
 interface Branch {
   points: THREE.Vector3[];
@@ -50,42 +64,36 @@ function curve(a: THREE.Vector3, ctrl: THREE.Vector3, b: THREE.Vector3, steps: n
   return pts;
 }
 
-/** Tubo por una polilínea con radio variable (anillos de `radial` lados). */
-function tube(
-  branch: Branch,
-  radial: number,
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  indices: number[],
-  random: () => number
-) {
-  const base = positions.length / 3;
-  const up = new THREE.Vector3(0, 1, 0);
-  const tangent = new THREE.Vector3();
-  const side = new THREE.Vector3();
-  const binormal = new THREE.Vector3();
-  const normal = new THREE.Vector3();
-  const color = new THREE.Color();
-  const { points, radii } = branch;
+const _up = new THREE.Vector3(0, 1, 0);
+const _x = new THREE.Vector3(1, 0, 0);
+const _tangent = new THREE.Vector3();
+const _side = new THREE.Vector3();
+const _binormal = new THREE.Vector3();
+const _normal = new THREE.Vector3();
+const _color = new THREE.Color();
 
+/** Tubo por una polilínea con radio variable (anillos de `radial` lados). */
+function tube(branch: Branch, radial: number, out: GeometryArrays, random: () => number) {
+  const base = out.positions.length / 3;
+  const { points, radii } = branch;
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     const next = points[Math.min(points.length - 1, i + 1)];
     const prev = points[Math.max(0, i - 1)];
-    tangent.subVectors(next, prev).normalize();
-    side.crossVectors(tangent, Math.abs(tangent.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : up).normalize();
-    binormal.crossVectors(side, tangent).normalize();
+    _tangent.subVectors(next, prev).normalize();
+    _side.crossVectors(_tangent, Math.abs(_tangent.y) > 0.95 ? _x : _up).normalize();
+    _binormal.crossVectors(_side, _tangent).normalize();
     const shade = Math.min(1, p.y / 4.5) * 0.7 + random() * 0.2;
-    color.copy(BARK_DARK).lerp(BARK_LIGHT, shade);
+    _color.copy(BARK_DARK).lerp(BARK_LIGHT, shade);
     for (let j = 0; j < radial; j++) {
       const a = (j / radial) * Math.PI * 2;
-      normal.copy(side).multiplyScalar(Math.cos(a)).addScaledVector(binormal, Math.sin(a));
+      _normal.copy(_side).multiplyScalar(Math.cos(a)).addScaledVector(_binormal, Math.sin(a));
       // Corteza irregular: el radio varía un poco alrededor del anillo.
       const r = radii[i] * (0.9 + 0.2 * Math.sin(a * 3 + i * 1.7));
-      positions.push(p.x + normal.x * r, p.y + normal.y * r, p.z + normal.z * r);
-      normals.push(normal.x, normal.y, normal.z);
-      colors.push(color.r, color.g, color.b);
+      out.positions.push(p.x + _normal.x * r, p.y + _normal.y * r, p.z + _normal.z * r);
+      out.normals.push(_normal.x, _normal.y, _normal.z);
+      out.colors.push(_color.r, _color.g, _color.b);
+      out.uvs.push(0, 0);
     }
   }
   for (let i = 0; i < points.length - 1; i++) {
@@ -94,39 +102,147 @@ function tube(
       const b = base + i * radial + ((j + 1) % radial);
       const c = base + (i + 1) * radial + j;
       const d = base + (i + 1) * radial + ((j + 1) % radial);
-      indices.push(a, c, b, b, c, d);
+      out.indices.push(a, c, b, b, c, d);
     }
   }
 }
 
-function fromArrays(
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  indices: number[] | null,
-  uvs?: number[]
-): THREE.BufferGeometry {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  if (uvs) geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  if (indices) geo.setIndex(indices);
-  geo.computeBoundingSphere();
-  return geo;
+// Icosaedros base indexados: cada bulto de follaje es una versión
+// deformada de uno de ellos. El de 42 vértices (80 caras) se usa para el
+// bulto principal de los racimos cercanos, así de cerca no se ven facetas;
+// el de 12 vértices (20 caras), para los bultos chicos y los árboles lejanos.
+function indexedIcosahedron(detail: number) {
+  const g = new THREE.IcosahedronGeometry(1, detail);
+  const pos = g.getAttribute("position");
+  const verts: THREE.Vector3[] = [];
+  const index: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    const v = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+    let k = verts.findIndex((w) => w.distanceToSquared(v) < 1e-6);
+    if (k === -1) {
+      k = verts.length;
+      verts.push(v);
+    }
+    index.push(k);
+  }
+  g.dispose();
+  return { verts, index };
+}
+const ICO_LOW = indexedIcosahedron(0);
+const ICO_HIGH = indexedIcosahedron(1);
+
+/** Un bulto de follaje: icosaedro deformado, achatado y girado al azar. */
+function lump(
+  center: THREE.Vector3,
+  radius: number,
+  clusterCenter: THREE.Vector3,
+  tint: number,
+  out: GeometryArrays,
+  random: () => number,
+  smooth = false
+) {
+  const ICO = smooth ? ICO_HIGH : ICO_LOW;
+  const base = out.positions.length / 3;
+  const sx = 0.9 + random() * 0.35;
+  const sy = 0.62 + random() * 0.22;
+  const sz = 0.9 + random() * 0.35;
+  const rot = new THREE.Euler(random() * Math.PI, random() * Math.PI, random() * Math.PI);
+  const q = new THREE.Quaternion().setFromEuler(rot);
+  const p = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const toCluster = new THREE.Vector3();
+  for (const v of ICO.verts) {
+    const jitter = smooth ? 0.88 + random() * 0.24 : 0.82 + random() * 0.32;
+    p.copy(v).applyQuaternion(q).multiplyScalar(radius * jitter);
+    p.set(p.x * sx, p.y * sy, p.z * sz).add(center);
+    // Normal suave: mitad la del bulto, mitad "hacia afuera" del racimo,
+    // así el conjunto se ilumina como un volumen de flores.
+    n.copy(v).applyQuaternion(q);
+    toCluster.subVectors(p, clusterCenter).normalize();
+    n.lerp(toCluster, 0.55).normalize();
+    out.positions.push(p.x, p.y, p.z);
+    out.normals.push(n.x, n.y, n.z);
+    const light = THREE.MathUtils.clamp(n.y * 0.5 + 0.55, 0, 1) * 0.85 + tint;
+    _color.copy(BLOSSOM_SHADE).lerp(BLOSSOM_LIGHT, Math.min(1, light));
+    out.colors.push(_color.r, _color.g, _color.b);
+    // Proyección plana continua (sin costuras) sobre la textura repetible.
+    out.uvs.push(p.x * 1.1 + p.z * 0.7, p.y * 1.1 + p.x * 0.4);
+  }
+  for (const k of ICO.index) out.indices.push(base + k);
 }
 
-function buildVariant(seed: number, detail: number): SakuraVariant {
+const QUAD = [
+  [-0.5, -0.5, 0, 0],
+  [0.5, -0.5, 1, 0],
+  [0.5, 0.5, 1, 1],
+  [-0.5, 0.5, 0, 1],
+];
+
+function cardsAround(
+  center: THREE.Vector3,
+  radius: number,
+  count: number,
+  sizeBoost: number,
+  out: GeometryArrays,
+  random: () => number
+) {
+  const nrm = new THREE.Vector3();
+  const axisU = new THREE.Vector3();
+  const axisV = new THREE.Vector3();
+  for (let k = 0; k < count; k++) {
+    // Punto sobre la superficie (achatada) del racimo, más hacia los
+    // costados y arriba (debajo casi no se ven).
+    const u = random() * 1.6 - 0.6;
+    const phi = random() * Math.PI * 2;
+    const sq = Math.sqrt(Math.max(0, 1 - u * u));
+    nrm.set(sq * Math.cos(phi), u * 0.8 + 0.1, sq * Math.sin(phi)).normalize();
+    const dist = radius * (0.72 + random() * 0.34);
+    const c = center.clone().addScaledVector(nrm, dist);
+    c.y -= dist * nrm.y * 0.28;
+    const size = (0.55 + random() * 0.3) * sizeBoost;
+    axisU.set(random() - 0.5, random() - 0.5, random() - 0.5).normalize();
+    axisV.crossVectors(nrm, axisU).normalize();
+    axisU.crossVectors(axisV, nrm).normalize();
+    const base = out.positions.length / 3;
+    const tone = 0.88 + random() * 0.14;
+    for (const [a, b, uu, vv] of QUAD) {
+      out.positions.push(
+        c.x + (axisU.x * a + axisV.x * b) * size,
+        c.y + (axisU.y * a + axisV.y * b) * size,
+        c.z + (axisU.z * a + axisV.z * b) * size
+      );
+      // Normal "esférica" (hacia afuera del racimo).
+      out.normals.push(nrm.x, nrm.y, nrm.z);
+      out.colors.push(tone, tone * 0.97, tone);
+      out.uvs.push(uu, vv);
+    }
+    out.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+}
+
+/**
+ * Un árbol completo. `detail` (0..1) sólo cambia cuánto cuesta el nivel
+ * cercano; `lod` = "far" es la versión liviana para árboles lejanos. La
+ * forma general (tronco, ramas, dónde están los racimos) es la misma en
+ * ambos niveles, para que el cambio de detalle no se note.
+ */
+export function buildSakuraTree(seed: number, detail: number, lod: "near" | "far"): TreeGeometry {
+  // Generadores separados: la estructura (ramas y racimos) sale idéntica
+  // en los dos niveles de detalle aunque cada uno use distinta cantidad
+  // de números al azar para la corteza o los bultos.
   const random = createSeededRandom(seed);
+  const barkRandom = createSeededRandom(seed + 17);
+  const leafRandom = createSeededRandom(seed + 31);
   const branches: Branch[] = [];
+  const twigs: Branch[] = [];
   const clusters: { center: THREE.Vector3; radius: number }[] = [];
 
   // --- Tronco: un poco inclinado hacia +X, con una leve S. ---
-  const height = 2.1 + random() * 0.45;
-  const trunkTop = new THREE.Vector3(0.32 + random() * 0.15, height, (random() - 0.5) * 0.3);
+  const height = 2.0 + random() * 0.55;
+  const trunkTop = new THREE.Vector3(0.28 + random() * 0.2, height, (random() - 0.5) * 0.35);
   const trunkPts = curve(
     new THREE.Vector3(0, -0.1, 0),
-    new THREE.Vector3(-0.12, height * 0.55, (random() - 0.5) * 0.25),
+    new THREE.Vector3(-0.15 + random() * 0.1, height * 0.55, (random() - 0.5) * 0.3),
     trunkTop,
     6
   );
@@ -135,157 +251,78 @@ function buildVariant(seed: number, detail: number): SakuraVariant {
     radii: trunkPts.map((_, i) => 0.26 - (i / (trunkPts.length - 1)) * 0.11 + (i === 0 ? 0.06 : 0)),
   });
 
-  // --- Ramas principales, abiertas y levemente colgantes en la punta. ---
-  const limbs = [
-    { az: -0.45 + (random() - 0.5) * 0.3, len: 2.6 + random() * 0.5, el: 0.42 },
-    { az: 0.5 + (random() - 0.5) * 0.3, len: 2.5 + random() * 0.5, el: 0.46 },
-    { az: 1.9 + (random() - 0.5) * 0.4, len: 1.8 + random() * 0.4, el: 0.62 },
-    { az: -2.0 + (random() - 0.5) * 0.4, len: 1.8 + random() * 0.4, el: 0.6 },
-    { az: Math.PI + (random() - 0.5) * 0.4, len: 1.5 + random() * 0.4, el: 0.75 },
-  ];
-  for (const limb of limbs) {
-    const dir = new THREE.Vector3(
-      Math.cos(limb.az) * Math.cos(limb.el),
-      Math.sin(limb.el),
-      -Math.sin(limb.az) * Math.cos(limb.el)
-    );
-    const start = trunkTop.clone().add(new THREE.Vector3(0, -0.15, 0));
-    const end = start.clone().addScaledVector(dir, limb.len);
-    end.y -= limb.len * 0.12; // la punta cae un poco
-    const ctrl = start.clone().addScaledVector(dir, limb.len * 0.5);
-    ctrl.y += limb.len * 0.28;
-    const pts = curve(start, ctrl, end, 5);
+  // --- Ramas principales: 4 a 6, abiertas, más largas hacia +X. ---
+  const limbCount = 4 + Math.floor(random() * 3);
+  for (let l = 0; l < limbCount; l++) {
+    // Ángulos repartidos alrededor pero con sesgo hacia +X (el camino).
+    const base = (l / limbCount) * Math.PI * 2 - Math.PI * 0.35;
+    const az = base * 0.85 + (random() - 0.5) * 0.5;
+    const towardPath = Math.cos(az);
+    const len = 1.5 + random() * 0.5 + Math.max(0, towardPath) * 1.0;
+    const el = 0.42 + random() * 0.3 - Math.max(0, towardPath) * 0.08;
+    const dir = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el));
+    const start = trunkTop.clone().add(new THREE.Vector3(0, -0.1 - random() * 0.3, 0));
+    const end = start.clone().addScaledVector(dir, len);
+    end.y -= len * (0.08 + random() * 0.1); // la punta cae un poco
+    const ctrl = start.clone().addScaledVector(dir, len * 0.5);
+    ctrl.y += len * (0.2 + random() * 0.15);
+    const pts = curve(start, ctrl, end, lod === "near" ? 5 : 3);
     branches.push({ points: pts, radii: pts.map((_, i) => 0.13 - (i / (pts.length - 1)) * 0.085) });
-    clusters.push({ center: end.clone().add(new THREE.Vector3(0, 0.28, 0)), radius: 0.95 + random() * 0.25 });
-    // Un racimo intermedio sobre la rama (se omite en calidad reducida:
-    // las tarjetas vecinas alcanzan para que la copa se vea llena).
-    const midRadius = 0.75 + random() * 0.2;
-    if (detail >= 1) {
-      clusters.push({ center: pts[3].clone().add(new THREE.Vector3(0, 0.45, 0)), radius: midRadius });
+    clusters.push({ center: end.clone().add(new THREE.Vector3(0, 0.25, 0)), radius: 0.9 + random() * 0.35 });
+
+    const mid = curve(start, ctrl, end, 5)[3];
+    // Racimo intermedio (no en todas las ramas: la copa queda despareja).
+    if (random() < 0.7 && (lod === "far" || detail >= 0.5)) {
+      clusters.push({ center: mid.clone().add(new THREE.Vector3(0, 0.42, 0)), radius: 0.62 + random() * 0.25 });
     }
 
-    // Ramas secundarias que abren la copa.
-    for (const turn of [-0.7, 0.7]) {
-      const from = pts[3];
-      const az = limb.az + turn + (random() - 0.5) * 0.3;
-      const el = limb.el * 0.7 + 0.1;
-      const d2 = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el));
-      const len = 0.9 + random() * 0.5;
-      const e2 = from.clone().addScaledVector(d2, len);
-      e2.y -= 0.12;
-      const c2 = from.clone().addScaledVector(d2, len * 0.5);
+    // Ramas secundarias que abren la copa (1 o 2 por rama).
+    const forks = random() < 0.5 ? [-0.75, 0.7] : [random() < 0.5 ? -0.7 : 0.7];
+    for (const turn of forks) {
+      const az2 = az + turn + (random() - 0.5) * 0.35;
+      const el2 = el * 0.7 + 0.1;
+      const d2 = new THREE.Vector3(Math.cos(az2) * Math.cos(el2), Math.sin(el2), -Math.sin(az2) * Math.cos(el2));
+      const len2 = 0.8 + random() * 0.6;
+      const e2 = mid.clone().addScaledVector(d2, len2);
+      e2.y -= 0.1;
+      const c2 = mid.clone().addScaledVector(d2, len2 * 0.5);
       c2.y += 0.2;
-      const p2 = curve(from, c2, e2, 3);
-      branches.push({ points: p2, radii: p2.map((_, i) => 0.06 - (i / (p2.length - 1)) * 0.035) });
-      clusters.push({ center: e2.clone().add(new THREE.Vector3(0, 0.22, 0)), radius: 0.7 + random() * 0.25 });
+      const p2 = curve(mid, c2, e2, 3);
+      twigs.push({ points: p2, radii: p2.map((_, i) => 0.06 - (i / (p2.length - 1)) * 0.035) });
+      clusters.push({ center: e2.clone().add(new THREE.Vector3(0, 0.2, 0)), radius: 0.62 + random() * 0.3 });
     }
   }
-  // Coronilla.
-  clusters.push({ center: trunkTop.clone().add(new THREE.Vector3(0.2, 1.3, 0)), radius: 1.05 });
+  // Coronilla, corrida hacia el camino.
+  clusters.push({ center: trunkTop.clone().add(new THREE.Vector3(0.3, 1.2 + random() * 0.3, 0)), radius: 1.0 });
 
-  // --- Tronco + ramas en una sola geometría ---
-  const tp: number[] = [];
-  const tn: number[] = [];
-  const tc: number[] = [];
-  const ti: number[] = [];
-  branches.forEach((b, i) => tube(b, i === 0 ? 8 : 6, tp, tn, tc, ti, random));
-  const trunk = fromArrays(tp, tn, tc, ti);
+  // --- Tronco + ramas ---
+  const trunk = emptyArrays();
+  branches.forEach((b, i) => tube(b, i === 0 ? (lod === "near" ? 8 : 6) : lod === "near" ? 6 : 5, trunk, barkRandom));
+  // Las ramitas finas sólo se dibujan de cerca (de lejos las tapa la copa).
+  if (lod === "near") twigs.forEach((b) => tube(b, 5, trunk, barkRandom));
 
-  // --- Volumen de los racimos ---
-  const bp: number[] = [];
-  const bn: number[] = [];
-  const bc: number[] = [];
-  const bu: number[] = [];
-  const color = new THREE.Color();
+  // --- Copas: varios bultos por racimo ---
+  const canopy = emptyArrays();
+  const cards = emptyArrays();
+  const lumpsPerCluster = lod === "far" ? 2 : detail >= 0.8 ? 4 : 3;
+  const cardsPerCluster = lod === "far" ? 2 : Math.max(5, Math.round(16 * detail));
+  const sizeBoost = lod === "far" ? 1.5 : 1 + (1 - Math.min(1, detail)) * 0.35;
+  const offset = new THREE.Vector3();
   for (const cl of clusters) {
-    const ico = new THREE.IcosahedronGeometry(cl.radius * 0.7, 1);
-    const pos = ico.getAttribute("position");
-    const uv = ico.getAttribute("uv");
-    const tint = random() * 0.25;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const y = pos.getY(i);
-      const z = pos.getZ(i);
-      const n = new THREE.Vector3(x, y, z).normalize();
-      const bump = 1 + 0.16 * Math.sin(x * 5.1 + z * 3.3 + seed) + 0.1 * Math.sin(y * 7.3 + x * 2.1);
-      bp.push(cl.center.x + x * bump, cl.center.y + y * bump * 0.74, cl.center.z + z * bump);
-      bn.push(n.x, n.y, n.z);
-      bu.push(uv.getX(i) * 3, uv.getY(i) * 2);
-      const light = Math.min(1, Math.max(0, n.y * 0.5 + 0.5)) * 0.8 + tint;
-      color.copy(BLOSSOM_DEEP).lerp(BLOSSOM_LIGHT, Math.min(1, light));
-      bc.push(color.r, color.g, color.b);
-    }
-    ico.dispose();
-  }
-  // Indexada: cada vértice compartido se procesa una sola vez (la
-  // versión sin índice procesaba cada uno hasta seis veces, en el
-  // render y otra vez en el pase de sombras).
-  const blobs = mergeVertices(fromArrays(bp, bn, bc, null, bu), 1e-4);
-  blobs.computeBoundingSphere();
-
-  // --- Tarjetas de flores alrededor de cada racimo ---
-  const cp: number[] = [];
-  const cn: number[] = [];
-  const cc: number[] = [];
-  const cu: number[] = [];
-  const ci: number[] = [];
-  const perCluster = Math.max(6, Math.round(20 * detail));
-  const quadCorner = [
-    [-0.5, -0.5, 0, 0],
-    [0.5, -0.5, 1, 0],
-    [0.5, 0.5, 1, 1],
-    [-0.5, 0.5, 0, 1],
-  ];
-  const axisU = new THREE.Vector3();
-  const axisV = new THREE.Vector3();
-  const nrm = new THREE.Vector3();
-  for (const cl of clusters) {
-    for (let k = 0; k < perCluster; k++) {
-      // Punto sobre la superficie (achatada) del racimo.
-      const u = random() * 2 - 1;
-      const phi = random() * Math.PI * 2;
-      const sq = Math.sqrt(1 - u * u);
-      nrm.set(sq * Math.cos(phi), u * 0.8 + 0.1, sq * Math.sin(phi)).normalize();
-      const dist = cl.radius * (0.72 + random() * 0.32);
-      const center = cl.center.clone().addScaledVector(nrm, dist);
-      center.y -= dist * nrm.y * 0.26;
-      // Con menos tarjetas (calidad reducida), cada una un poco más grande.
-      const size = (0.55 + random() * 0.3) * (1 + (1 - Math.min(1, detail)) * 0.35);
-      // Orientación al azar: desde cualquier ángulo se ven flores.
-      axisU.set(random() - 0.5, random() - 0.5, random() - 0.5).normalize();
-      axisV.crossVectors(nrm, axisU).normalize();
-      axisU.crossVectors(axisV, nrm).normalize();
-      const base = cp.length / 3;
-      const tone = 0.88 + random() * 0.14;
-      for (const [a, b, uu, vv] of quadCorner) {
-        cp.push(
-          center.x + (axisU.x * a + axisV.x * b) * size,
-          center.y + (axisU.y * a + axisV.y * b) * size,
-          center.z + (axisU.z * a + axisV.z * b) * size
-        );
-        // Normal "esférica" (hacia afuera del racimo): la copa se ilumina
-        // como un volumen y no como tarjetas planas sueltas.
-        cn.push(nrm.x, nrm.y, nrm.z);
-        cc.push(tone, tone * (0.96 + random() * 0.04), tone);
-        cu.push(uu, vv);
+    const tint = leafRandom() * 0.2;
+    for (let k = 0; k < lumpsPerCluster; k++) {
+      // El primer bulto va al centro; los demás, corridos a los costados y
+      // arriba, más chicos: la silueta del racimo queda irregular.
+      if (k === 0) offset.set(0, 0, 0);
+      else {
+        const a = leafRandom() * Math.PI * 2;
+        offset.set(Math.cos(a) * cl.radius * 0.55, (leafRandom() - 0.2) * cl.radius * 0.4, Math.sin(a) * cl.radius * 0.55);
       }
-      ci.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      const r = cl.radius * (k === 0 ? (lod === "far" ? 0.75 : 0.62) : 0.42 + leafRandom() * 0.18);
+      lump(cl.center.clone().add(offset), r, cl.center, tint, canopy, leafRandom, k === 0 && lod === "near");
     }
+    cardsAround(cl.center, cl.radius, cardsPerCluster, sizeBoost, cards, leafRandom);
   }
-  const cards = fromArrays(cp, cn, cc, ci, cu);
 
-  return { trunk, blobs, cards, clusters: clusters.map((c) => c.center) };
-}
-
-const cache = new Map<string, SakuraVariant>();
-
-export const SAKURA_VARIANT_COUNT = 3;
-
-export function getSakuraVariant(index: number, detail: number): SakuraVariant {
-  const key = `${index}-${detail}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
-  const variant = buildVariant(9001 + index * 7919, detail);
-  cache.set(key, variant);
-  return variant;
+  return { trunk, canopy, cards, clusters: clusters.map((c) => c.center) };
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
+import { MeshBuilder } from "@/lib/meshBuilder";
 import { heightAt } from "@/lib/terrain";
 import {
   BOUNDARY,
@@ -61,15 +62,6 @@ function buildLeafLitterGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-interface Placement {
-  x: number;
-  z: number;
-  rotY: number;
-  tilt: number;
-  scale: number;
-  color: THREE.Color;
-}
-
 function scatter(count: number, seed: number): { x: number; z: number }[] {
   const random = createSeededRandom(seed);
   const list: { x: number; z: number }[] = [];
@@ -93,97 +85,46 @@ const LEAF_TONES = ["#c97a3f", "#d99a3d", "#9c5b2e", "#b5482f"];
  * pero que rompen la sensación de "plano de pasto uniforme" entre
  * una flor y otra. Todo estático (no requiere animación por frame). */
 export function GroundLitter({ count }: { count: number }) {
-  const rockMeshRef = useRef<THREE.InstancedMesh>(null);
-  const leafMeshRef = useRef<THREE.InstancedMesh>(null);
-
-  const rockGeometry = useMemo(() => buildRockGeometry(), []);
-  const leafGeometry = useMemo(() => buildLeafLitterGeometry(), []);
-  const rockMaterial = useMemo(
-    () => new THREE.MeshLambertMaterial({ vertexColors: true }),
-    []
-  );
-  const leafMaterial = useMemo(
-    () =>
-      // El color de cada hoja viene por instancia (setColorAt). Antes se
-      // pedía también color por vértice, que esta geometría no tiene: el
-      // shader lo leía como negro y las hojas se veían como triángulos
-      // oscuros sobre el pasto.
-      new THREE.MeshLambertMaterial({
-        side: THREE.DoubleSide,
-      }),
-    []
-  );
-
-  const rockPlacements = useMemo<Placement[]>(() => {
-    const random = createSeededRandom(5151);
-    return scatter(Math.round(count * 0.35), 6262).map((p) => ({
-      ...p,
-      rotY: random() * Math.PI * 2,
-      tilt: (random() - 0.5) * 0.3,
-      scale: 0.55 + random() * 0.9,
-      color: new THREE.Color(1, 1, 1),
-    }));
-  }, [count]);
-
-  const leafPlacements = useMemo<Placement[]>(() => {
-    const random = createSeededRandom(8181);
-    return scatter(Math.round(count * 0.65), 9292).map((p) => ({
-      ...p,
-      rotY: random() * Math.PI * 2,
-      tilt: (random() - 0.5) * 0.35,
-      scale: 0.7 + random() * 0.8,
-      color: new THREE.Color(LEAF_TONES[Math.floor(random() * LEAF_TONES.length)]),
-    }));
-  }, [count]);
-
-  useEffect(() => {
-    const mesh = rockMeshRef.current;
-    if (!mesh) return;
-    rockPlacements.forEach((p, i) => {
+  // Piedritas y hojas caídas horneadas en UNA malla estática (antes, dos
+  // mallas instanciadas): el color de cada hoja queda en sus vértices.
+  const geometry = useMemo(() => {
+    const rock = buildRockGeometry();
+    const leaf = buildLeafLitterGeometry();
+    leaf.setAttribute(
+      "color",
+      new THREE.Float32BufferAttribute(new Float32Array(leaf.getAttribute("position").count * 3).fill(1), 3)
+    );
+    const b = new MeshBuilder();
+    const rockRandom = createSeededRandom(5151);
+    for (const p of scatter(Math.round(count * 0.35), 6262)) {
       dummy.position.set(p.x, heightAt(p.x, p.z), p.z);
-      dummy.rotation.set(p.tilt, p.rotY, p.tilt * 0.7);
-      dummy.scale.setScalar(p.scale);
+      const tilt = (rockRandom() - 0.5) * 0.3;
+      dummy.rotation.set(tilt, rockRandom() * Math.PI * 2, tilt * 0.7);
+      dummy.scale.setScalar(0.55 + rockRandom() * 0.9);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-  }, [rockPlacements]);
-
-  useEffect(() => {
-    const mesh = leafMeshRef.current;
-    if (!mesh) return;
-    leafPlacements.forEach((p, i) => {
+      b.addWithColors(rock, { matrix: dummy.matrix.clone() });
+    }
+    const leafRandom = createSeededRandom(8181);
+    for (const p of scatter(Math.round(count * 0.65), 9292)) {
       // La hoja ya está modelada acostada (plano XZ): sólo una leve
       // inclinación, no un giro de 90° que la dejaba parada.
+      const rotY = leafRandom() * Math.PI * 2;
+      const tilt = (leafRandom() - 0.5) * 0.35;
+      const scale = 0.7 + leafRandom() * 0.8;
+      const tint = new THREE.Color(LEAF_TONES[Math.floor(leafRandom() * LEAF_TONES.length)]);
       dummy.position.set(p.x, heightAt(p.x, p.z) + 0.01, p.z);
-      dummy.rotation.set(p.tilt * 0.3, p.rotY, p.tilt * 0.3);
-      dummy.scale.setScalar(p.scale);
+      dummy.rotation.set(tilt * 0.3, rotY, tilt * 0.3);
+      dummy.scale.setScalar(scale);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      mesh.setColorAt(i, p.color);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [leafPlacements]);
-
-  return (
-    <>
-      {rockPlacements.length > 0 && (
-        <instancedMesh
-          ref={rockMeshRef}
-          args={[rockGeometry, rockMaterial, rockPlacements.length]}
-          receiveShadow
-          frustumCulled={false}
-        />
-      )}
-      {leafPlacements.length > 0 && (
-        <instancedMesh
-          ref={leafMeshRef}
-          args={[leafGeometry, leafMaterial, leafPlacements.length]}
-          receiveShadow
-          frustumCulled={false}
-        />
-      )}
-    </>
+      b.addWithColors(leaf, { matrix: dummy.matrix.clone(), tint });
+    }
+    return b.isEmpty ? null : b.build();
+  }, [count]);
+  const material = useMemo(
+    () => new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+    []
   );
+
+  if (!geometry) return null;
+  return <mesh geometry={geometry} material={material} receiveShadow />;
 }

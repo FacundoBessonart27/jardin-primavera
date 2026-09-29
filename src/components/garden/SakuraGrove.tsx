@@ -9,26 +9,22 @@ import { sceneUniforms } from "@/lib/sceneUniforms";
 import { createBlossomDenseTexture, createBlossomTexture } from "@/lib/gardenTextures";
 import { createPetalTexture } from "@/lib/proceduralTextures";
 import { createSeededRandom } from "@/lib/random";
-import { getSakuraVariant, SAKURA_VARIANT_COUNT } from "./sakuraGeometry";
+import { buildSakuraTree, type GeometryArrays, type TreeGeometry } from "./sakuraGeometry";
 
 const windUniforms = { uTime: { value: 0 }, uWind: { value: 1 } };
 
 /** Balanceo suave de la copa en el vertex shader: más arriba, más se
- * mueve; cada árbol con su propia fase (tomada de su posición). */
+ * mueve; cada árbol con su propia fase. `aWind` = (fase del árbol,
+ * altura del vértice sobre la base del árbol). */
 function withCanopyWind<T extends THREE.Material>(material: T): T {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
-    shader.vertexShader = `uniform float uTime;\nuniform float uWind;\n${shader.vertexShader}`.replace(
+    shader.vertexShader = `attribute vec2 aWind;\nuniform float uTime;\nuniform float uWind;\n${shader.vertexShader}`.replace(
       "#include <begin_vertex>",
       `#include <begin_vertex>
-      #ifdef USE_INSTANCING
-        vec2 treeXZ = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
-      #else
-        vec2 treeXZ = vec2(0.0);
-      #endif
-      float phase = dot(treeXZ, vec2(0.37, 0.61));
-      float reach = smoothstep(1.5, 5.5, position.y);
+      float phase = aWind.x;
+      float reach = smoothstep(1.5, 5.5, aWind.y);
       float gust = 0.7 + 0.3 * sin(uTime * 0.35 + phase);
       transformed.x += sin(uTime * 0.8 + phase + position.z * 0.6) * 0.07 * reach * uWind * gust;
       transformed.z += cos(uTime * 0.65 + phase * 1.3 + position.x * 0.5) * 0.05 * reach * uWind * gust;
@@ -52,30 +48,130 @@ function treeMatrix(index: number, out: THREE.Matrix4): THREE.Matrix4 {
   return out.copy(dummy.matrix);
 }
 
+const treeSeed = (index: number) => 9001 + index * 7919;
+
+/** Árboles repartidos en tres zonas del recorrido (entrada y lazos,
+ * túnel, santuario): cada zona es su propio grupo de mallas, así la
+ * cámara descarta las zonas que no ve y cada una elige su detalle. */
+const GROUP_COUNT = 3;
+function treeGroups(): number[][] {
+  const order = SAKURA_TREES.map((_, i) => i).sort((a, b) => SAKURA_TREES[b].z - SAKURA_TREES[a].z);
+  const size = Math.ceil(order.length / GROUP_COUNT);
+  return Array.from({ length: GROUP_COUNT }, (_, g) => order.slice(g * size, (g + 1) * size)).filter(
+    (g) => g.length > 0
+  );
+}
+
+interface BakedLod {
+  trunk: THREE.BufferGeometry;
+  canopy: THREE.BufferGeometry;
+  cards: THREE.BufferGeometry;
+}
+
+const _m = new THREE.Matrix4();
+const _nm = new THREE.Matrix3();
+const _v = new THREE.Vector3();
+
+/** Une las piezas de varios árboles (ya ubicados en el mundo) en una
+ * sola geometría indexada, con el atributo de viento de cada árbol. */
+function bake(indices: number[], pick: (t: TreeGeometry) => GeometryArrays, trees: TreeGeometry[], withUv: boolean) {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const uvs: number[] = [];
+  const wind: number[] = [];
+  const index: number[] = [];
+  indices.forEach((treeIndex, k) => {
+    const arrays = pick(trees[k]);
+    const t = SAKURA_TREES[treeIndex];
+    treeMatrix(treeIndex, _m);
+    _nm.getNormalMatrix(_m);
+    const base = positions.length / 3;
+    const phase = t.x * 0.37 + t.z * 0.61;
+    for (let i = 0; i < arrays.positions.length; i += 3) {
+      _v.set(arrays.positions[i], arrays.positions[i + 1], arrays.positions[i + 2]);
+      const localHeight = _v.y * t.scale;
+      _v.applyMatrix4(_m);
+      positions.push(_v.x, _v.y, _v.z);
+      _v.set(arrays.normals[i], arrays.normals[i + 1], arrays.normals[i + 2]).applyMatrix3(_nm).normalize();
+      normals.push(_v.x, _v.y, _v.z);
+      colors.push(arrays.colors[i], arrays.colors[i + 1], arrays.colors[i + 2]);
+      wind.push(phase, localHeight);
+    }
+    if (withUv) uvs.push(...arrays.uvs);
+    for (const i of arrays.indices) index.push(base + i);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  if (withUv) geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute("aWind", new THREE.Float32BufferAttribute(wind, 2));
+  geo.setIndex(index);
+  geo.computeBoundingSphere();
+  if (geo.boundingSphere) geo.boundingSphere.radius += 0.5;
+  return geo;
+}
+
+function bakeGroup(indices: number[], detail: number, lod: "near" | "far"): BakedLod {
+  const trees = indices.map((i) => buildSakuraTree(treeSeed(i), detail, lod));
+  return {
+    trunk: bake(indices, (t) => t.trunk, trees, false),
+    canopy: bake(indices, (t) => t.canopy, trees, true),
+    cards: bake(indices, (t) => t.cards, trees, true),
+  };
+}
+
 /**
  * Cerezos en flor a los lados del camino principal (y un túnel donde
  * las copas se juntan por encima), más algunos en los lazos y el gran
- * "árbol madre" junto al santuario. Todos los árboles comparten tres
- * variantes de geometría, dibujadas con InstancedMesh: 3 piezas × 3
- * variantes = 9 draw calls para toda la arboleda.
+ * "árbol madre" junto al santuario. Cada árbol es único; se hornean por
+ * zona en 3 mallas (tronco, copa, tarjetas) con dos niveles de detalle,
+ * y cada zona usa la versión liviana cuando la cámara está lejos.
  */
-export function SakuraGrove({ detail, shadows }: { detail: number; shadows: boolean }) {
-  const variants = useMemo(
-    () => Array.from({ length: SAKURA_VARIANT_COUNT }, (_, i) => getSakuraVariant(i, detail)),
-    [detail]
-  );
-  const byVariant = useMemo(
-    () =>
-      Array.from({ length: SAKURA_VARIANT_COUNT }, (_, v) =>
-        SAKURA_TREES.map((t, i) => ({ t, i })).filter(({ t }) => t.variant === v).map(({ i }) => i)
-      ),
-    []
+export function SakuraGrove({
+  detail,
+  shadows,
+  lodDistance,
+  cardShadows,
+}: {
+  detail: number;
+  shadows: boolean;
+  lodDistance: number;
+  /** Si las tarjetas de flores reciben sombra (sólo en calidad alta). */
+  cardShadows: boolean;
+}) {
+  const groups = useMemo(() => {
+    return treeGroups().map((indices) => {
+      const xs = indices.map((i) => SAKURA_TREES[i].x);
+      const zs = indices.map((i) => SAKURA_TREES[i].z);
+      return {
+        indices,
+        near: bakeGroup(indices, detail, "near"),
+        far: bakeGroup(indices, detail, "far"),
+        box: {
+          minX: Math.min(...xs) - 3,
+          maxX: Math.max(...xs) + 3,
+          minZ: Math.min(...zs) - 3,
+          maxZ: Math.max(...zs) + 3,
+        },
+      };
+    });
+  }, [detail]);
+
+  useEffect(
+    () => () => {
+      for (const g of groups) {
+        for (const lod of [g.near, g.far]) Object.values(lod).forEach((geo) => geo.dispose());
+      }
+    },
+    [groups]
   );
 
   const materials = useMemo(
     () => ({
       trunk: new THREE.MeshLambertMaterial({ vertexColors: true }),
-      blobs: withCanopyWind(
+      canopy: withCanopyWind(
         new THREE.MeshLambertMaterial({
           map: createBlossomDenseTexture(),
           vertexColors: true,
@@ -97,82 +193,81 @@ export function SakuraGrove({ detail, shadows }: { detail: number; shadows: bool
     []
   );
 
-  useFrame(() => {
+  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const farState = useRef<boolean[]>([]);
+  // Mallas nuevas (cambió la calidad): vuelven a elegir su detalle.
+  useEffect(() => {
+    farState.current = [];
+  }, [groups]);
+
+  useFrame(({ camera }) => {
     windUniforms.uTime.value = sceneUniforms.windTime;
     windUniforms.uWind.value = sceneUniforms.windStrength;
+    groups.forEach((g, gi) => {
+      const dx = Math.max(g.box.minX - camera.position.x, 0, camera.position.x - g.box.maxX);
+      const dz = Math.max(g.box.minZ - camera.position.z, 0, camera.position.z - g.box.maxZ);
+      const d = Math.hypot(dx, dz);
+      const wasFar = farState.current[gi] ?? false;
+      const far = wasFar ? d > lodDistance - 3 : d > lodDistance;
+      if (far === wasFar && farState.current[gi] !== undefined) return;
+      farState.current[gi] = far;
+      const lod = far ? g.far : g.near;
+      const [trunk, canopy, cards] = [0, 1, 2].map((k) => meshRefs.current[gi * 3 + k]);
+      if (trunk) trunk.geometry = lod.trunk;
+      if (canopy) canopy.geometry = lod.canopy;
+      if (cards) cards.geometry = lod.cards;
+    });
   });
 
   return (
     <group>
-      {variants.map((variant, v) => (
-        <VariantInstances
-          key={`${v}-${detail}`}
-          indices={byVariant[v]}
-          trunk={variant.trunk}
-          blobs={variant.blobs}
-          cards={variant.cards}
-          materials={materials}
-          shadows={shadows}
-        />
+      {groups.map((g, gi) => (
+        <group key={`${gi}-${detail}`}>
+          <mesh
+            ref={(m) => {
+              meshRefs.current[gi * 3] = m;
+            }}
+            geometry={g.near.trunk}
+            material={materials.trunk}
+            castShadow={shadows}
+            receiveShadow
+          />
+          <mesh
+            ref={(m) => {
+              meshRefs.current[gi * 3 + 1] = m;
+            }}
+            geometry={g.near.canopy}
+            material={materials.canopy}
+            castShadow={shadows}
+            receiveShadow
+          />
+          <mesh
+            ref={(m) => {
+              meshRefs.current[gi * 3 + 2] = m;
+            }}
+            geometry={g.near.cards}
+            material={materials.cards}
+            receiveShadow={cardShadows}
+          />
+        </group>
       ))}
     </group>
   );
 }
 
-function VariantInstances({
-  indices,
-  trunk,
-  blobs,
-  cards,
-  materials,
-  shadows,
-}: {
-  indices: number[];
-  trunk: THREE.BufferGeometry;
-  blobs: THREE.BufferGeometry;
-  cards: THREE.BufferGeometry;
-  materials: { trunk: THREE.Material; blobs: THREE.Material; cards: THREE.Material };
-  shadows: boolean;
-}) {
-  const refs = [
-    useRef<THREE.InstancedMesh>(null),
-    useRef<THREE.InstancedMesh>(null),
-    useRef<THREE.InstancedMesh>(null),
-  ];
-
-  useEffect(() => {
-    const m = new THREE.Matrix4();
-    for (const ref of refs) {
-      const mesh = ref.current;
-      if (!mesh) continue;
-      indices.forEach((treeIndex, i) => mesh.setMatrixAt(i, treeMatrix(treeIndex, m)));
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.computeBoundingSphere();
-      if (mesh.boundingSphere) mesh.boundingSphere.radius += 1.5;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indices, trunk, blobs, cards]);
-
-  if (indices.length === 0) return null;
-  return (
-    <>
-      <instancedMesh ref={refs[0]} args={[trunk, materials.trunk, indices.length]} castShadow={shadows} receiveShadow />
-      <instancedMesh ref={refs[1]} args={[blobs, materials.blobs, indices.length]} castShadow={shadows} receiveShadow />
-      <instancedMesh ref={refs[2]} args={[cards, materials.cards, indices.length]} receiveShadow />
-    </>
-  );
-}
-
 /** Puntos (en el mundo) de donde nacen los pétalos: los racimos de cada
  * copa. Se calculan una sola vez. */
+let blossomPoints: THREE.Vector3[] | null = null;
 function blossomWorldPoints(): THREE.Vector3[] {
+  if (blossomPoints) return blossomPoints;
   const points: THREE.Vector3[] = [];
   const m = new THREE.Matrix4();
-  SAKURA_TREES.forEach((t, i) => {
-    const variant = getSakuraVariant(t.variant, 1);
+  SAKURA_TREES.forEach((_, i) => {
+    const tree = buildSakuraTree(treeSeed(i), 0.35, "far");
     treeMatrix(i, m);
-    for (const c of variant.clusters) points.push(c.clone().applyMatrix4(m));
+    for (const c of tree.clusters) points.push(c.clone().applyMatrix4(m));
   });
+  blossomPoints = points;
   return points;
 }
 
@@ -259,13 +354,20 @@ export function SakuraPetalFall({ count }: { count: number }) {
 
 /** Pétalo chato para la alfombra del suelo. */
 function buildGroundPetalGeometry(): THREE.BufferGeometry {
-  const shape = new THREE.Shape();
-  shape.moveTo(0, -0.045);
-  shape.bezierCurveTo(0.04, -0.03, 0.035, 0.03, 0.008, 0.045);
-  shape.lineTo(-0.008, 0.045);
-  shape.bezierCurveTo(-0.035, 0.03, -0.04, -0.03, 0, -0.045);
-  const geo = new THREE.ShapeGeometry(shape, 3);
-  geo.rotateX(-Math.PI / 2);
+  // Seis vértices alcanzan para la silueta de un pétalo a esta escala
+  // (antes, una curva de ~14 vértices por pétalo × cientos de pétalos).
+  const pts = [
+    [0, -0.045],
+    [0.032, -0.018],
+    [0.03, 0.02],
+    [0.006, 0.045],
+    [-0.03, 0.02],
+    [-0.032, -0.018],
+  ];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pts.flatMap(([x, z]) => [x, 0, z]), 3));
+  geo.setIndex([0, 2, 1, 0, 3, 2, 0, 4, 3, 0, 5, 4]);
+  geo.computeVertexNormals();
   return geo;
 }
 

@@ -10,36 +10,67 @@ import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferG
 export class MeshBuilder {
   private parts: THREE.BufferGeometry[] = [];
 
-  /** Agrega una geometría ya posicionada, pintada de un color. */
-  add(geometry: THREE.BufferGeometry, color: THREE.ColorRepresentation, matrix?: THREE.Matrix4): this {
-    let geo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+  /** Agrega una geometría ya posicionada, pintada de un color. `glow`
+   * (0..1) la hace brillar con luz propia (ver createGlowLambert). */
+  add(
+    geometry: THREE.BufferGeometry,
+    color: THREE.ColorRepresentation,
+    matrix?: THREE.Matrix4,
+    glow = 0
+  ): this {
+    const geo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
     geometry.dispose();
     if (matrix) geo.applyMatrix4(matrix);
-    geo.deleteAttribute("uv");
     if (!geo.getAttribute("normal")) geo.computeVertexNormals();
     const c = new THREE.Color(color);
     const count = geo.getAttribute("position").count;
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) colors.set([c.r, c.g, c.b], i * 3);
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    // Normaliza a (position, normal, color) para poder unir todo.
-    for (const name of Object.keys(geo.attributes)) {
-      if (name !== "position" && name !== "normal" && name !== "color") geo.deleteAttribute(name);
-    }
-    geo = geo.index ? geo.toNonIndexed() : geo;
-    this.parts.push(geo);
+    this.push(geo, glow);
     return this;
   }
 
-  /** Agrega una geometría que ya trae su propio color por vértice. */
-  addWithColors(geometry: THREE.BufferGeometry): this {
-    const geo = geometry.index ? geometry.toNonIndexed() : geometry;
+  /**
+   * Agrega una geometría que ya trae su propio color por vértice, con
+   * una transformación y un tinte opcionales (así un mismo modelo se
+   * "planta" muchas veces en una sola malla estática).
+   */
+  addWithColors(
+    geometry: THREE.BufferGeometry,
+    options: { matrix?: THREE.Matrix4; tint?: THREE.Color; glow?: number } = {}
+  ): this {
+    const geo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+    if (options.matrix) geo.applyMatrix4(options.matrix);
     if (!geo.getAttribute("normal")) geo.computeVertexNormals();
+    if (options.tint) {
+      const colors = geo.getAttribute("color") as THREE.BufferAttribute;
+      for (let i = 0; i < colors.count; i++) {
+        colors.setXYZ(
+          i,
+          colors.getX(i) * options.tint.r,
+          colors.getY(i) * options.tint.g,
+          colors.getZ(i) * options.tint.b
+        );
+      }
+    }
+    this.push(geo, options.glow);
+    return this;
+  }
+
+  /** Normaliza a (position, normal, color, aGlow) para poder unir todo.
+   * Si no se indica `glow`, se conserva el brillo que ya traiga la pieza. */
+  private push(geo: THREE.BufferGeometry, glow?: number) {
     for (const name of Object.keys(geo.attributes)) {
-      if (name !== "position" && name !== "normal" && name !== "color") geo.deleteAttribute(name);
+      if (name !== "position" && name !== "normal" && name !== "color" && name !== "aGlow") {
+        geo.deleteAttribute(name);
+      }
+    }
+    const count = geo.getAttribute("position").count;
+    if (glow !== undefined || !geo.getAttribute("aGlow")) {
+      geo.setAttribute("aGlow", new THREE.BufferAttribute(new Float32Array(count).fill(glow ?? 0), 1));
     }
     this.parts.push(geo);
-    return this;
   }
 
   /** Caja centrada en (x, y, z) con rotación Y opcional. */
@@ -102,4 +133,30 @@ export class MeshBuilder {
     merged.computeBoundingSphere();
     return merged;
   }
+}
+
+/**
+ * Material Lambert con color por vértice que además hace brillar (luz
+ * propia, sin iluminación) las partes marcadas con `aGlow` — por ejemplo
+ * la ventana de un farol o un farol de papel — dentro de la MISMA malla
+ * que el resto del prop: un draw call en vez de dos.
+ */
+export function createGlowLambert(
+  glowColor: THREE.Color,
+  params: THREE.MeshLambertMaterialParameters = {}
+): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, ...params });
+  const uniform = { value: glowColor };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uGlowColor = uniform;
+    shader.vertexShader = `attribute float aGlow;\nvarying float vGlow;\n${shader.vertexShader}`.replace(
+      "#include <begin_vertex>",
+      "#include <begin_vertex>\n  vGlow = aGlow;"
+    );
+    shader.fragmentShader = `uniform vec3 uGlowColor;\nvarying float vGlow;\n${shader.fragmentShader}`.replace(
+      "#include <emissivemap_fragment>",
+      "#include <emissivemap_fragment>\n  totalEmissiveRadiance += vGlow * uGlowColor * vColor.rgb;"
+    );
+  };
+  return mat;
 }

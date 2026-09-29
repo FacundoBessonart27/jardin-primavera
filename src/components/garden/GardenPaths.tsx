@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import * as THREE from "three";
 import { heightAt, PLAZA_LEVEL } from "@/lib/terrain";
 import { PATHS, PLAZA, samplePath, streamDistance, type GardenPath } from "@/lib/gardenPlan";
 import { createPathTexture, createPlazaTexture } from "@/lib/gardenTextures";
 import { createSeededRandom } from "@/lib/random";
+import { MeshBuilder } from "@/lib/meshBuilder";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 /** Cuánto sobresale la cinta del camino por encima del terreno. */
 const LIFT = 0.03;
@@ -158,35 +160,45 @@ function stonePlacements(): StonePlacement[] {
   return list;
 }
 
-const dummy = new THREE.Object3D();
 
-function PathStones() {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const geometry = useMemo(() => buildFlatStoneGeometry(), []);
+/** Pasaderas, piedras de borde y el cantero central de la plaza (tierra
+ * y borde de piedra): todo estático, en una sola malla con color por
+ * vértice. */
+function StonesAndBed() {
+  const geometry = useMemo(() => {
+    const b = new MeshBuilder();
+    const stone = buildFlatStoneGeometry();
+    const m = new THREE.Matrix4();
+    const tone = new THREE.Color();
+    for (const s of stonePlacements()) {
+      m.compose(
+        new THREE.Vector3(s.x, heightAt(s.x, s.z) + 0.02, s.z),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw),
+        new THREE.Vector3(s.sx, 1, s.sz)
+      );
+      b.add(stone.clone(), tone.set("#b3a592").multiplyScalar(s.tone).clone(), m);
+    }
+    const y = PLAZA_LEVEL + LIFT;
+    const soil = new THREE.CircleGeometry(PLAZA.bedRadius + 0.1, 40);
+    soil.rotateX(-Math.PI / 2);
+    soil.translate(PLAZA.x, y + 0.012, PLAZA.z);
+    const rim = new THREE.TorusGeometry(PLAZA.bedRadius + 0.12, 0.07, 6, 48);
+    rim.rotateX(-Math.PI / 2);
+    rim.translate(PLAZA.x, y + 0.04, PLAZA.z);
+    b.add(soil, "#4a3326").add(rim, "#a89a88");
+    return b.build();
+  }, []);
   const material = useMemo(
-    () => new THREE.MeshLambertMaterial({ color: "#b3a592" }),
+    () =>
+      new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3,
+      }),
     []
   );
-  const stones = useMemo(() => stonePlacements(), []);
-
-  useEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    const color = new THREE.Color();
-    stones.forEach((s, i) => {
-      dummy.position.set(s.x, heightAt(s.x, s.z) + 0.02, s.z);
-      dummy.rotation.set(0, s.yaw, 0);
-      dummy.scale.set(s.sx, 1, s.sz);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      mesh.setColorAt(i, color.setRGB(s.tone, s.tone * 0.98, s.tone * 0.94));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [stones]);
-
-  return <instancedMesh ref={ref} args={[geometry, material, stones.length]} receiveShadow />;
+  return <mesh geometry={geometry} material={material} receiveShadow renderOrder={2} />;
 }
 
 /** Empedrado circular de la plaza, con el centro de tierra donde crece
@@ -218,23 +230,9 @@ function Plaza() {
       }),
     []
   );
-  const soil = useMemo(() => {
-    const geo = new THREE.CircleGeometry(PLAZA.bedRadius + 0.1, 40);
-    geo.rotateX(-Math.PI / 2);
-    return geo;
-  }, []);
-
   return (
     <group position={[PLAZA.x, PLAZA_LEVEL + LIFT, PLAZA.z]}>
       <mesh geometry={geometry} material={material} receiveShadow renderOrder={1} />
-      {/* Borde de piedra y tierra oscura del cantero central. */}
-      <mesh geometry={soil} position={[0, 0.012, 0]} receiveShadow renderOrder={2}>
-        <meshLambertMaterial color="#4a3326" polygonOffset polygonOffsetFactor={-3} polygonOffsetUnits={-3} />
-      </mesh>
-      <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <torusGeometry args={[PLAZA.bedRadius + 0.12, 0.07, 6, 48]} />
-        <meshLambertMaterial color="#a89a88" />
-      </mesh>
     </group>
   );
 }
@@ -242,15 +240,17 @@ function Plaza() {
 /** Caminos del jardín: el principal de tierra con pasaderas de piedra,
  * los secundarios de grava con piedritas de borde, y la plaza. */
 export function GardenPaths() {
-  const ribbons = useMemo(
-    () =>
-      PATHS.map((path) => ({
-        id: path.id,
-        kind: path.kind === "main" ? ("earth" as const) : ("gravel" as const),
-        geometry: buildRibbon(path),
-      })),
-    []
-  );
+  // Una malla por material (tierra / grava) con todos los caminos de ese
+  // tipo unidos: 2 draw calls en vez de uno por camino.
+  const ribbons = useMemo(() => {
+    const byKind = { earth: [] as THREE.BufferGeometry[], gravel: [] as THREE.BufferGeometry[] };
+    for (const path of PATHS) byKind[path.kind === "main" ? "earth" : "gravel"].push(buildRibbon(path));
+    return (["earth", "gravel"] as const).map((kind) => ({
+      id: kind,
+      kind,
+      geometry: mergeGeometries(byKind[kind], false)!,
+    }));
+  }, []);
   const materials = useMemo(
     () => ({ earth: makePathMaterial("earth"), gravel: makePathMaterial("gravel") }),
     []
@@ -261,7 +261,7 @@ export function GardenPaths() {
       {ribbons.map((r) => (
         <mesh key={r.id} geometry={r.geometry} material={materials[r.kind]} receiveShadow renderOrder={1} />
       ))}
-      <PathStones />
+      <StonesAndBed />
       <Plaza />
     </group>
   );

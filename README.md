@@ -165,24 +165,40 @@ sube el puente y la escalinata siguiendo su altura.
 
 La app detecta la potencia aproximada del dispositivo (núcleos de CPU,
 memoria, tipo de puntero, tamaño de pantalla) y elige automáticamente un
-nivel de calidad — **HIGH / MEDIUM / LOW** (`src/lib/quality.ts`) — que
-ajusta:
+nivel de calidad — **HIGH / MEDIUM / LOW** (`src/lib/quality.ts`). Los tres
+niveles muestran el mismo jardín (caminos, canteros, sakuras, puente,
+torii, plaza, flor especial y santuario están siempre); lo que cambia es
+el **costo de dibujarlo**:
 
-- Cantidad de flores (150 a 520) y distancia hasta la que se dibujan
-- Cantidad de mechones de pasto (2200 a 9000)
-- Detalle de las copas de sakura, pétalos, luciérnagas, árboles lejanos y aves
-- Resolución de píxeles (DPR) máxima
-- Sombras activadas o no
+- cantidad de flores (150 a 520), distancia de dibujo y distancia desde
+  la que usan su versión liviana;
+- radio de pasto alrededor de la cámara, detalle de las copas de sakura,
+  pétalos, luciérnagas, árboles lejanos y aves;
+- sombras (suaves en HIGH, simples y a 30 Hz en MEDIUM, sin sombras en
+  LOW), material de flores sin "sheen" en LOW y resolución máxima (DPR).
 
 Además, `PerformanceMonitor` (de drei) baja la calidad en vivo si detecta
-FPS bajos mientras se usa. El pasto y las copas se animan con shaders en
-GPU, y todo lo repetido (flores, sakuras, faroles, bancos, piedras,
-pétalos, árboles lejanos) usa `InstancedMesh` con geometrías y materiales
-compartidos. Las flores se agrupan por sector (los lejanos ni se dibujan
-ni se recalculan), la sombra del sol acompaña a la cámara (mismo costo en
-cualquier punto del jardín) y no hay luces reales extra: el brillo de
-faroles y shoji es emisivo con halos y charcos de luz falsos. Se respeta `prefers-reduced-motion` del sistema operativo, reduciendo
-el viento, las animaciones de cámara y las partículas.
+FPS bajos mientras se usa.
+
+Cómo se mantiene liviano:
+
+- **Nivel de detalle por distancia**: las flores lejanas usan una
+  geometría ~5 veces más liviana y cada especie de un sector se dibuja en
+  una sola malla; los sakuras tienen versión cercana y lejana por zona;
+  el pasto sólo se dibuja cerca de la cámara (con borde suave).
+- **Menos draw calls**: todo lo repetido o estático va en una sola malla
+  (faroles con su luz, bancos, rocas, pasaderas, bosque lejano, nubes,
+  hojarasca, nenúfares, torii y faroles de papel junto al santuario;
+  halos y charcos de luz en dos mallas; mariposas instanciadas).
+- **Sombras baratas**: la sombra del sol acompaña a la cámara y sólo la
+  proyectan los objetos cercanos.
+- **Sin cálculo por frame innecesario**: el viento del pasto, arbustos,
+  copas y mariposas va en shaders; las flores lejanas se animan cada tres
+  frames; las luciérnagas se detienen lejos del santuario.
+- **Sin tirones**: todos los shaders se compilan al cargar.
+
+Se respeta `prefers-reduced-motion` del sistema operativo, reduciendo el
+viento, las animaciones de cámara y las partículas.
 
 ## Cómo publicarlo en GitHub Pages
 

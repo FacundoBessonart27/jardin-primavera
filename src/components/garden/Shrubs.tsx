@@ -100,13 +100,26 @@ const dummy = new THREE.Object3D();
 export function Shrubs({ count }: { count: number }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(() => buildBushGeometry(), []);
-  const material = useMemo(
-    () =>
-      new THREE.MeshLambertMaterial({
-        vertexColors: true,
-      }),
-    []
-  );
+  const time = useRef({ value: 0 });
+  const wind = useRef({ value: 1 });
+  const material = useMemo(() => {
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    // Vaivén de viento en el shader (antes se recalculaban todas las
+    // matrices en cada frame): la parte alta del arbusto se mece apenas.
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = time.current;
+      shader.uniforms.uWind = wind.current;
+      shader.vertexShader = `uniform float uTime;\nuniform float uWind;\n${shader.vertexShader}`.replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        float shrubPhase = instanceMatrix[3][0] * 0.71 + instanceMatrix[3][2] * 0.43;
+        float sway = sin(uTime * 0.9 + shrubPhase) * 0.02 * uWind;
+        transformed.z += sway * position.y;
+        transformed.x += sway * 0.6 * position.y;`
+      );
+    };
+    return mat;
+  }, []);
 
   const placements = useMemo(() => {
     const random = createSeededRandom(4242017);
@@ -180,18 +193,8 @@ export function Shrubs({ count }: { count: number }) {
   }, [placements]);
 
   useFrame(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    placements.forEach((p, i) => {
-      const sway =
-        Math.sin(sceneUniforms.windTime * 0.9 + p.phase) * 0.02 * sceneUniforms.windStrength;
-      dummy.position.set(p.x, p.y, p.z);
-      dummy.rotation.set(sway, p.rot, sway * 0.6);
-      dummy.scale.setScalar(p.scale);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
+    time.current.value = sceneUniforms.windTime;
+    wind.current.value = sceneUniforms.windStrength;
   });
 
   if (placements.length === 0) return null;

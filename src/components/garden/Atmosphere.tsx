@@ -28,7 +28,17 @@ const AMBIENT_SHRINE = new THREE.Color("#ffc9a0");
  *  - niebla del color del horizonte, que da profundidad atmosférica;
  *  - al acercarse al santuario, la luz se vuelve apenas más cálida.
  */
-export function Atmosphere({ shadows, highQuality }: { shadows: boolean; highQuality: boolean }) {
+export function Atmosphere({
+  shadows,
+  highQuality,
+  shadowInterval,
+}: {
+  shadows: boolean;
+  highQuality: boolean;
+  /** Cada cuántos frames se recalcula el mapa de sombras. */
+  shadowInterval: number;
+}) {
+  const frameRef = useRef(0);
   const { scene } = useThree();
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const hemiRef = useRef<THREE.HemisphereLight>(null);
@@ -60,9 +70,14 @@ export function Atmosphere({ shadows, highQuality }: { shadows: boolean; highQua
     };
   }, [scene]);
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, gl }) => {
     const light = lightRef.current;
     if (!light) return;
+    // En calidad media las sombras se recalculan un frame sí y otro no: a
+    // 30 Hz no se nota y el pase de sombras cuesta la mitad.
+    frameRef.current++;
+    gl.shadowMap.autoUpdate = shadowInterval <= 1;
+    if (shadowInterval > 1) gl.shadowMap.needsUpdate = frameRef.current % shadowInterval === 0;
     // Centro de la zona con sombra: un poco por delante de la cámara.
     camera.getWorldDirection(_forward);
     _forward.y = 0;

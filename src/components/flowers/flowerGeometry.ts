@@ -586,8 +586,15 @@ function mergeParts(parts: MeshPart[]): THREE.BufferGeometry {
   return merged;
 }
 
+/** true mientras se construye la versión lejana ("far") de una flor:
+ * tallos, hojas, cáliz y centro usan menos segmentos y se omiten los
+ * estambres (a esa distancia no se distinguen). */
+let farDetail = false;
+
 interface BuildOptions {
-  detail: "field" | "showcase";
+  /** "far": versión liviana para flores lejanas (menos segmentos por
+   * pétalo y hoja; la silueta y los colores son los mismos). */
+  detail: "field" | "showcase" | "far";
   /** 0 = capullo cerrado, 1 = flor completamente abierta. */
   bloom?: number;
 }
@@ -740,7 +747,7 @@ function buildDiscHead(
   }
 
   if (centerScale > 0) {
-    const centerSegs = segments.length >= 6 ? 14 : 10;
+    const centerSegs = farDetail ? 6 : segments.length >= 6 ? 14 : 10;
     const centerGeo = new THREE.SphereGeometry(
       centerRadius,
       centerSegs,
@@ -773,7 +780,7 @@ function buildDiscHead(
     parts.push({ geometry: centerGeo, color: centerColorObj });
   }
 
-  buildStamens(visual, topLayerHeadY, random, parts);
+  if (!farDetail) buildStamens(visual, topLayerHeadY, random, parts);
 }
 
 function buildStamens(
@@ -891,7 +898,9 @@ function buildClusterHead(
   const { scale, petalCount } = visual;
   const spec = SHAPES.thin;
   const spikeLength = scale * 0.55 * THREE.MathUtils.lerp(0.58, 1, bloom);
-  const floretSteps = Math.max(6, Math.round(petalCount / 4));
+  // Versión lejana (detalle "far"): menos florcitas, cada una un quad.
+  const far = segments.length <= 3;
+  const floretSteps = Math.max(far ? 4 : 6, Math.round((petalCount / 4) * (far ? 0.6 : 1)));
   const petalColorMain = new THREE.Color(visual.petalColor);
   const petalColorAlt = new THREE.Color(visual.petalColorAlt);
   const centerColorObj = new THREE.Color(visual.centerColor);
@@ -903,7 +912,7 @@ function buildClusterHead(
     const y = headY + t * spikeLength;
     const radius = (1 - t * 0.55) * 0.1 * scale;
     const opened = t <= bloom * 1.15 + 0.05;
-    const subPetals = 5;
+    const subPetals = far ? 3 : 5;
     const stagger = k * 0.7;
     for (let p = 0; p < subPetals; p++) {
       const angle = (p / subPetals) * Math.PI * 2 + stagger + random() * 0.2;
@@ -915,10 +924,10 @@ function buildClusterHead(
       const floretGeo = withMotion(
         createPetalGeometry(
           spec,
-          0.1 * scale * sizeJitter,
-          0.038 * scale * sizeJitter,
-          Math.max(2, Math.floor(segments.length / 2)),
-          Math.max(2, Math.floor(segments.width / 2)),
+          0.1 * scale * sizeJitter * (far ? 1.25 : 1),
+          0.038 * scale * sizeJitter * (far ? 1.3 : 1),
+          far ? 1 : Math.max(2, Math.floor(segments.length / 2)),
+          far ? 1 : Math.max(2, Math.floor(segments.width / 2)),
           { base: useAlt ? throatAlt : throatMain, tip },
           { edgeNoise: 0.04, twist, ripple, ao: 0.2, random }
         ),
@@ -967,7 +976,10 @@ function buildDomeHead(
   const floretMatrix = new THREE.Matrix4();
   const one = new THREE.Vector3(1, 1, 1);
 
-  const floretCount = Math.max(30, petalCount);
+  // Versión lejana: la mitad de florcitas, más grandes, cada pétalo un quad
+  // (de lejos la bocha se lee igual de llena).
+  const far = segments.length <= 3;
+  const floretCount = Math.round(Math.max(30, petalCount) * (far ? 0.5 : 1));
   for (let i = 0; i < floretCount; i++) {
     const u = (i + 0.5) / floretCount;
     // 0 = polo superior; llega por debajo del ecuador para que la bocha
@@ -987,7 +999,7 @@ function buildDomeHead(
     );
     const openAngle = 0.12 + random() * 0.12;
     const useAlt = random() < 0.35;
-    const floretScale = 0.68 + random() * 0.58;
+    const floretScale = (0.68 + random() * 0.58) * (far ? 1.4 : 1);
     const twist = spec.twist * (random() < 0.5 ? -1 : 1) * (0.6 + random() * 0.7);
     const ripple = spec.ripple * (0.5 + random() * 0.9);
     const tip = jitterColor(useAlt ? petalColorAlt : petalColorMain, random, 1.5);
@@ -999,8 +1011,8 @@ function buildDomeHead(
         spec,
         floretSize * 0.9 * floretScale,
         floretSize * 0.9 * 0.9 * floretScale,
-        Math.max(2, Math.floor(segments.length / 2)),
-        Math.max(2, Math.floor(segments.width / 2)),
+        far ? 1 : Math.max(2, Math.floor(segments.length / 2)),
+        far ? 1 : Math.max(2, Math.floor(segments.width / 2)),
         { base: useAlt ? throatAlt : throatMain, tip },
         { edgeNoise: 0.05, twist, ripple, ao, random }
       ),
@@ -1033,6 +1045,8 @@ function buildUmbelHead(
 ) {
   const { scale } = visual;
   const spec = SHAPES.star;
+  // Versión lejana: pétalos de un solo tramo y sin tubo.
+  const far = segments.length <= 3;
   const florets = Math.max(4, visual.petalCount);
   const openFraction = THREE.MathUtils.lerp(0.15, 0.9, bloom);
   const petalColor = new THREE.Color(visual.petalColor);
@@ -1068,11 +1082,13 @@ function buildUmbelHead(
 
     if (random() < openFraction) {
       const tubeLen = 0.035 * scale;
-      const tube = new THREE.CylinderGeometry(0.008 * scale, 0.005 * scale, tubeLen, 5, 1, true);
-      tube.translate(0, tubeLen / 2, 0);
-      tube.applyMatrix4(floretMatrix);
-      withMotion(tube, phase, 0);
-      parts.push({ geometry: tube, color: petalColor.clone().lerp(budColor, 0.25) });
+      if (!far) {
+        const tube = new THREE.CylinderGeometry(0.008 * scale, 0.005 * scale, tubeLen, 5, 1, true);
+        tube.translate(0, tubeLen / 2, 0);
+        tube.applyMatrix4(floretMatrix);
+        withMotion(tube, phase, 0);
+        parts.push({ geometry: tube, color: petalColor.clone().lerp(budColor, 0.25) });
+      }
 
       const rot = random() * Math.PI;
       for (let p = 0; p < 5; p++) {
@@ -1082,8 +1098,8 @@ function buildUmbelHead(
           spec,
           len,
           len * spec.widthRatio,
-          Math.max(3, Math.floor(segments.length * 0.6)),
-          2,
+          far ? 1 : Math.max(3, Math.floor(segments.length * 0.6)),
+          far ? 1 : 2,
           { base: throat, tip },
           { edgeNoise: spec.edgeNoise, twist: 0.35, ripple: 0.02, ao: 0.1, random }
         );
@@ -1129,8 +1145,8 @@ function buildCalyx(
     topRadius,
     bottomRadius,
     calyxHeight,
-    7,
-    tubular ? 3 : 1,
+    farDetail ? 5 : 7,
+    tubular && !farDetail ? 3 : 1,
     true
   );
   calyxGeo.translate(0, calyxHeight / 2 - calyxHeight * 0.15, 0);
@@ -1153,7 +1169,7 @@ function buildCalyx(
       ? THREE.MathUtils.lerp(1.3, 0.95, bloom)
       : THREE.MathUtils.lerp(1.25, -0.5, bloom) + (random() - 0.5) * 0.25;
     const sepal = withMotion(
-      createPetalGeometry(SEPAL, len, len * 0.45, 3, 2, { base: sepalBase, tip: sepalTip }, {
+      createPetalGeometry(SEPAL, len, len * 0.45, farDetail ? 1 : 3, farDetail ? 1 : 2, { base: sepalBase, tip: sepalTip }, {
         edgeNoise: 0.04,
         edgeShade: 0.2,
         twist: (random() - 0.5) * 0.3,
@@ -1294,8 +1310,8 @@ function buildLeaves(
         leaf.spec,
         leaf.length,
         leaf.width,
-        leaf.segs[0],
-        leaf.segs[1],
+        farDetail ? Math.min(2, leaf.segs[0]) : leaf.segs[0],
+        farDetail ? 1 : leaf.segs[1],
         { base: stemColor.clone().multiplyScalar(0.8), tip: leafTip },
         {
           edgeNoise: 0.05,
@@ -1358,7 +1374,14 @@ function buildStem(
   };
 
   const radiusMul = (isMain ? 1 : 0.85) * (visual.stemWidth ?? 1);
-  const stemGeo = new THREE.CylinderGeometry(0.018 * s * radiusMul, 0.03 * s * radiusMul, H, 7, 6, true);
+  const stemGeo = new THREE.CylinderGeometry(
+    0.018 * s * radiusMul,
+    0.03 * s * radiusMul,
+    H,
+    farDetail ? 4 : 7,
+    farDetail ? 3 : 6,
+    true
+  );
   stemGeo.translate(0, H / 2, 0);
   bendStemGeometry(stemGeo, H, frame.bend, frame.neck, dirX, dirZ);
   stemGeo.translate(frame.baseX, 0, frame.baseZ);
@@ -1411,12 +1434,21 @@ export function buildFlowerGeometry(
   const random = createSeededRandom(seed);
   const bloom = options.bloom ?? 1;
   const segments =
-    options.detail === "showcase" ? { length: 9, width: 6 } : { length: 5, width: 4 };
+    options.detail === "showcase"
+      ? { length: 9, width: 6 }
+      : options.detail === "far"
+        ? { length: 2, width: 1 }
+        : { length: 5, width: 4 };
 
   const parts: MeshPart[] = [];
   const stemCount = Math.max(1, visual.clump ?? 1);
-  for (let k = 0; k < stemCount; k++) {
-    buildStem(visual, random, segments, bloom, parts, k, stemCount);
+  farDetail = options.detail === "far";
+  try {
+    for (let k = 0; k < stemCount; k++) {
+      buildStem(visual, random, segments, bloom, parts, k, stemCount);
+    }
+  } finally {
+    farDetail = false;
   }
 
   const merged = mergeParts(parts);
