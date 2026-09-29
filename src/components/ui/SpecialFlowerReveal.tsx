@@ -24,7 +24,7 @@ export function SpecialFlowerReveal() {
 
   useEffect(() => {
     if (isOpen && selected) {
-      focusOnFlower(selected.position);
+      focusOnFlower(selected.position, { distance: 2.5, height: 1.75 });
       // Queda registrada como encontrada: deja de "llamar" con su brillo.
       markSpecialFound();
       playChime("special");

@@ -22,7 +22,7 @@ export function GardenCanvas({ quality }: GardenCanvasProps) {
         shadows={liveQuality.shadows}
         dpr={[1, liveQuality.maxDpr]}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
-        camera={{ fov: 42, near: 0.1, far: 100 }}
+        camera={{ fov: 42, near: 0.1, far: 600 }}
         onCreated={({ gl }) => {
           gl.setClearColor("#241640");
         }}

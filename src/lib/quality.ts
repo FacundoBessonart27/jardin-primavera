@@ -14,6 +14,20 @@ export interface QualitySettings {
   shrubCount: number;
   /** Piedras y hojas caídas sobre el terreno. */
   litterCount: number;
+  /** Distancia (m) hasta la que se dibujan las flores. */
+  flowerDrawDistance: number;
+  /** Pétalos de sakura cayendo de los árboles. */
+  sakuraPetalCount: number;
+  /** Pétalos caídos sobre el suelo y el camino. */
+  groundPetalCount: number;
+  /** Árboles del bosque que rodea el valle. */
+  farTreeCount: number;
+  /** Tarjetas de flor por racimo en las copas de sakura (1 = completo). */
+  canopyDetail: number;
+  /** Luciérnagas / motas de luz en la zona del santuario. */
+  fireflyCount: number;
+  /** Aves lejanas en el cielo. */
+  birdCount: number;
   /** Pixel ratio máximo permitido para el canvas. */
   maxDpr: number;
   shadows: boolean;
@@ -23,36 +37,57 @@ export interface QualitySettings {
 export const QUALITY_PRESETS: Record<QualityTier, QualitySettings> = {
   high: {
     tier: "high",
-    flowerCount: 260,
-    grassCount: 4000,
-    petalCount: 60,
-    butterflyCount: 5,
-    shrubCount: 70,
-    litterCount: 90,
+    flowerCount: 520,
+    grassCount: 9000,
+    petalCount: 70,
+    butterflyCount: 7,
+    shrubCount: 150,
+    litterCount: 160,
+    flowerDrawDistance: 58,
+    sakuraPetalCount: 240,
+    groundPetalCount: 1600,
+    farTreeCount: 300,
+    canopyDetail: 1,
+    fireflyCount: 36,
+    birdCount: 7,
     maxDpr: 2,
     shadows: true,
     bloom: true,
   },
   medium: {
     tier: "medium",
-    flowerCount: 160,
-    grassCount: 2000,
-    petalCount: 36,
-    butterflyCount: 3,
-    shrubCount: 42,
-    litterCount: 55,
+    flowerCount: 270,
+    grassCount: 4400,
+    petalCount: 42,
+    butterflyCount: 5,
+    shrubCount: 95,
+    litterCount: 100,
+    flowerDrawDistance: 40,
+    sakuraPetalCount: 140,
+    groundPetalCount: 700,
+    farTreeCount: 190,
+    canopyDetail: 0.5,
+    fireflyCount: 26,
+    birdCount: 5,
     maxDpr: 1.5,
     shadows: true,
     bloom: false,
   },
   low: {
     tier: "low",
-    flowerCount: 90,
-    grassCount: 800,
-    petalCount: 18,
-    butterflyCount: 1,
-    shrubCount: 18,
-    litterCount: 22,
+    flowerCount: 150,
+    grassCount: 2200,
+    petalCount: 20,
+    butterflyCount: 2,
+    shrubCount: 45,
+    litterCount: 45,
+    flowerDrawDistance: 30,
+    sakuraPetalCount: 60,
+    groundPetalCount: 300,
+    farTreeCount: 110,
+    canopyDetail: 0.35,
+    fireflyCount: 14,
+    birdCount: 3,
     maxDpr: 1,
     shadows: false,
     bloom: false,

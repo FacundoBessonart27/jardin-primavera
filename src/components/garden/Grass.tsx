@@ -6,6 +6,38 @@ import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
 import { sceneUniforms } from "@/lib/sceneUniforms";
 import { heightAt } from "@/lib/terrain";
+import {
+  BOUNDARY,
+  FLOWER_BEDS,
+  PATHS,
+  PLAZA,
+  SHRINE,
+  bedRadius,
+  boundaryRadius,
+  pathEdgeDistance,
+  pondRadius,
+  samplePath,
+  streamDistance,
+} from "@/lib/gardenPlan";
+
+/** Donde puede crecer un mechón: no sobre los caminos, el agua, la
+ * plaza ni el zócalo del santuario, y poco dentro de los canteros. */
+function isGrassSpot(x: number, z: number, random: () => number): boolean {
+  if (boundaryRadius(x, z) > 1.12) return false;
+  if (pathEdgeDistance(x, z) < -0.05) return false;
+  if (pondRadius(x, z) < 1.18 || streamDistance(x, z) < 1.35) return false;
+  if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.radius + 0.15) return false;
+  if (
+    Math.abs(x - SHRINE.x) < SHRINE.plinthW / 2 + 0.2 &&
+    Math.abs(z - SHRINE.z) < SHRINE.plinthD / 2 + SHRINE.stepsDepth + 0.2
+  ) {
+    return false;
+  }
+  for (const b of FLOWER_BEDS) {
+    if (bedRadius(b, x, z) < 0.8 && random() < 0.75) return false;
+  }
+  return true;
+}
 
 const BLADE_HEIGHT = 0.5;
 
@@ -58,9 +90,10 @@ export function Grass({ count, windStrength }: GrassProps) {
   const geometry = useMemo(() => createBladeGeometry(), []);
 
   const material = useMemo(() => {
-    const mat = new THREE.MeshStandardMaterial({
+    // Lambert: mismo aspecto mate que antes (rugosidad 1) pero bastante
+    // más barato por píxel, que en el pasto se nota.
+    const mat = new THREE.MeshLambertMaterial({
       vertexColors: true,
-      roughness: 1,
       side: THREE.DoubleSide,
     });
 
@@ -96,11 +129,32 @@ export function Grass({ count, windStrength }: GrassProps) {
     const dummy = new THREE.Object3D();
     const phases = new Float32Array(count);
 
+    const pathLengths = PATHS.map((p) => p.length);
+    const totalPath = pathLengths.reduce((a, b) => a + b, 0);
+
     for (let i = 0; i < count; i++) {
-      const radius = Math.sqrt(random()) * 20;
-      const angle = random() * Math.PI * 2;
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius - 3;
+      // Dos tercios del pasto acompañan los caminos (donde se camina y
+      // se mira de cerca); el resto se reparte por todo el valle.
+      let x = 0;
+      let z = 0;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        if (random() < 0.66) {
+          let pick = random() * totalPath;
+          let pi = 0;
+          while (pick > pathLengths[pi] && pi < PATHS.length - 1) pick -= pathLengths[pi++];
+          const p = samplePath(PATHS[pi], pick);
+          const side = random() < 0.5 ? -1 : 1;
+          const off = side * (PATHS[pi].halfWidth + 0.05 + Math.pow(random(), 1.6) * 5);
+          x = p.x - p.tz * off;
+          z = p.z + p.tx * off;
+        } else {
+          const radius = Math.sqrt(random()) * 1.1;
+          const angle = random() * Math.PI * 2;
+          x = BOUNDARY.cx + Math.cos(angle) * radius * BOUNDARY.rx;
+          z = BOUNDARY.cz + Math.sin(angle) * radius * BOUNDARY.rz;
+        }
+        if (isGrassSpot(x, z, random)) break;
+      }
 
       dummy.position.set(x, heightAt(x, z), z);
       dummy.rotation.y = random() * Math.PI * 2;

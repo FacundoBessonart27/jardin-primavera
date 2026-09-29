@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { useExperienceStore } from "@/store/experienceStore";
 import { playerState } from "@/lib/playerState";
 import { touchInputState } from "@/lib/inputState";
-import { heightAt, clampToGarden } from "@/lib/terrain";
+import { resolveMove, walkHeightAt } from "@/lib/terrain";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { useIsTouchDevice } from "@/hooks/useIsTouchDevice";
 import { raycastFlowerAtCrosshair, trySelectPlacement } from "@/lib/flowerRegistry";
@@ -26,6 +26,25 @@ const DECELERATION = 9;
  * del centro, velocidad plena al fondo). */
 const JOYSTICK_DEAD_ZONE = 0.08;
 const JOYSTICK_CURVE = 1.35;
+/** Zoom: cuánto se puede acercar (menos campo visual) o alejar. */
+const ZOOM_MIN = 0.58;
+const ZOOM_MAX = 1.3;
+const FOV_MIN = 30;
+const FOV_MAX = 88;
+
+/** Campo visual vertical base según la forma de la pantalla: en un
+ * celular vertical se abre más, para no ver el jardín "por una rendija"
+ * (el campo horizontal nunca baja de ~62° mientras se pueda). */
+function baseFovFor(aspect: number): number {
+  const vertical = 60;
+  const minHorizontal = THREE.MathUtils.degToRad(62);
+  const needed = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minHorizontal / 2) / aspect));
+  return THREE.MathUtils.clamp(Math.max(vertical, needed), vertical, 80);
+}
+
+function applyZoom(factor: number) {
+  playerState.zoom = THREE.MathUtils.clamp(playerState.zoom * factor, ZOOM_MIN, ZOOM_MAX);
+}
 
 const MOVE_KEYS = new Set([
   "KeyW",
@@ -39,6 +58,9 @@ const MOVE_KEYS = new Set([
   "ShiftLeft",
   "ShiftRight",
 ]);
+
+const ZOOM_IN_KEYS = new Set(["Equal", "NumpadAdd", "KeyE"]);
+const ZOOM_OUT_KEYS = new Set(["Minus", "NumpadSubtract", "KeyQ"]);
 
 /**
  * Cámara en primera persona: reemplaza la órbita anterior por una
@@ -54,7 +76,13 @@ const MOVE_KEYS = new Set([
  *    flor la selecciona directamente (igual que antes).
  *
  * La cámara nunca atraviesa el suelo (sigue el relieve del terreno,
- * ver lib/terrain) y queda contenida dentro del límite del jardín.
+ * el puente y la escalinata del santuario, ver lib/terrain), queda
+ * contenida dentro del jardín y no atraviesa agua, árboles, faroles,
+ * bancos ni el santuario (se desliza a lo largo de ellos).
+ *
+ * Zoom: rueda del mouse o teclas +/- (Q/E) en escritorio, pellizco con
+ * dos dedos en el celular. Cambia el campo visual dentro de un rango
+ * acotado (nunca "sale" del cuerpo del jugador).
  */
 export function FirstPersonControls() {
   const { camera, gl } = useThree();
@@ -67,12 +95,18 @@ export function FirstPersonControls() {
   const hoveredRef = useRef<string | null>(null);
   const eulerRef = useRef(new THREE.Euler(0, 0, 0, "YXZ"));
   const velocityRef = useRef(new THREE.Vector2());
+  /** Altura del suelo suavizada (escalones, puente) para que la cámara
+   * no dé saltitos al subir o bajar. */
+  const groundRef = useRef<number | null>(null);
 
   // Teclado (sólo relevante en escritorio, pero no molesta si se deja
   // activo en touch: nada escucha esas teclas ahí).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (MOVE_KEYS.has(e.code)) keysRef.current[e.code] = true;
+      if (!playerState.movementEnabled) return;
+      if (ZOOM_IN_KEYS.has(e.code)) applyZoom(0.88);
+      if (ZOOM_OUT_KEYS.has(e.code)) applyZoom(1 / 0.88);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (MOVE_KEYS.has(e.code)) keysRef.current[e.code] = false;
@@ -111,11 +145,18 @@ export function FirstPersonControls() {
       );
     };
 
+    const onWheel = (e: WheelEvent) => {
+      if (!playerState.movementEnabled) return;
+      applyZoom(Math.exp(THREE.MathUtils.clamp(e.deltaY, -120, 120) * 0.0012));
+    };
+
     canvas.addEventListener("click", onClick);
     document.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("wheel", onWheel, { passive: true });
     return () => {
       canvas.removeEventListener("click", onClick);
       document.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("wheel", onWheel);
     };
   }, [camera, gl, isTouch]);
 
@@ -134,6 +175,22 @@ export function FirstPersonControls() {
     }
 
     const delta = Math.min(rawDelta, MAX_DELTA);
+
+    // --- Zoom (pellizco en táctil; rueda/teclas ya aplicadas) y campo visual ---
+    if (touchInputState.pinchScale !== 1) {
+      applyZoom(touchInputState.pinchScale);
+      touchInputState.pinchScale = 1;
+    }
+    const perspective = camera as THREE.PerspectiveCamera;
+    const targetFov = THREE.MathUtils.clamp(
+      baseFovFor(perspective.aspect) * playerState.zoom,
+      FOV_MIN,
+      FOV_MAX
+    );
+    if (Math.abs(perspective.fov - targetFov) > 0.01) {
+      perspective.fov += (targetFov - perspective.fov) * (1 - Math.exp(-8 * delta));
+      perspective.updateProjectionMatrix();
+    }
 
     // --- Mirar (táctil: acumulado por TouchControls) ---
     if (isTouch) {
@@ -208,17 +265,25 @@ export function FirstPersonControls() {
     if (!hasInput && currentSpeed < 0.01) velocity.set(0, 0);
 
     if (currentSpeed > 0.001) {
-      const [cx, cz] = clampToGarden(
-        playerState.position.x + velocity.x * delta,
-        playerState.position.z + velocity.y * delta
-      );
+      const fromX = playerState.position.x;
+      const fromZ = playerState.position.z;
+      const [cx, cz] = resolveMove(fromX, fromZ, fromX + velocity.x * delta, fromZ + velocity.y * delta);
       playerState.position.x = cx;
       playerState.position.z = cz;
+      // Si algo frenó el paso, la velocidad acompaña (sin "empujar" contra
+      // el obstáculo ni rebotar al soltarlo).
+      if (delta > 0) {
+        velocity.x = (cx - fromX) / delta;
+        velocity.y = (cz - fromZ) / delta;
+      }
       bobTimeRef.current += delta * currentSpeed * 3.4;
     }
 
     // --- Cámara: sigue el relieve del terreno, nunca lo atraviesa ---
-    const groundY = heightAt(playerState.position.x, playerState.position.z);
+    const rawGround = walkHeightAt(playerState.position.x, playerState.position.z);
+    if (groundRef.current === null) groundRef.current = rawGround;
+    groundRef.current += (rawGround - groundRef.current) * (1 - Math.exp(-14 * delta));
+    const groundY = Math.max(groundRef.current, rawGround - 0.05);
     // El balanceo de la caminata crece y se apaga con la velocidad (no
     // se corta de golpe al soltar la tecla o el joystick).
     const bobAmount = prefersReducedMotion

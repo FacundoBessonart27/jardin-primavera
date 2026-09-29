@@ -4,13 +4,40 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
-import { heightAt, GARDEN_BOUNDARY_RADIUS, GARDEN_CENTER_Z } from "@/lib/terrain";
+import { heightAt } from "@/lib/terrain";
 import { sceneUniforms } from "@/lib/sceneUniforms";
-import { CAMERA_POSITIONS } from "@/lib/cameraController";
+import {
+  BOUNDARY,
+  FLOWER_BEDS,
+  OBSTACLES,
+  PLAZA,
+  POND,
+  SHRINE,
+  SPAWN,
+  boundaryRadius,
+  pathEdgeDistance,
+  pondRadius,
+  streamDistance,
+} from "@/lib/gardenPlan";
 
-const CLEAR_RADIUS = 1.4;
-const SPAWN_X = CAMERA_POSITIONS.gardenHome.x;
-const SPAWN_Z = CAMERA_POSITIONS.gardenHome.z;
+/** Lugar apto para un arbusto: fuera de caminos, agua, plaza, santuario
+ * y props; siempre con un poco de aire alrededor del camino. */
+function isShrubSpot(x: number, z: number): boolean {
+  if (pathEdgeDistance(x, z) < 0.45) return false;
+  if (pondRadius(x, z) < 1.35 || streamDistance(x, z) < 1.8) return false;
+  if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.radius + 0.6) return false;
+  if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 1.6) return false;
+  if (
+    Math.abs(x - SHRINE.x) < SHRINE.plinthW / 2 + 0.3 &&
+    Math.abs(z - SHRINE.z) < SHRINE.plinthD / 2 + SHRINE.stepsDepth + 0.3
+  ) {
+    return false;
+  }
+  for (const o of OBSTACLES) {
+    if (Math.hypot(x - o.x, z - o.z) < o.r + 0.45) return false;
+  }
+  return true;
+}
 
 /** Un arbustito bajo: tres bochas achatadas superpuestas con un leve
  * degradé (más oscuro abajo, más claro arriba), para que el jardín no
@@ -75,33 +102,62 @@ export function Shrubs({ count }: { count: number }) {
   const geometry = useMemo(() => buildBushGeometry(), []);
   const material = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshLambertMaterial({
         vertexColors: true,
-        roughness: 0.95,
-        metalness: 0,
       }),
     []
   );
 
   const placements = useMemo(() => {
     const random = createSeededRandom(4242017);
-    const radius = GARDEN_BOUNDARY_RADIUS - 0.6;
     const list: { x: number; y: number; z: number; scale: number; rot: number; phase: number }[] = [];
-    for (let i = 0; i < count; i++) {
-      const angle = random() * Math.PI * 2;
-      const r = Math.sqrt(random()) * radius;
-      const x = Math.cos(angle) * r;
-      const z = GARDEN_CENTER_Z + Math.sin(angle) * r;
-      if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < CLEAR_RADIUS) continue;
+    const add = (x: number, z: number, scale: number) => {
+      if (!isShrubSpot(x, z)) return;
       list.push({
         x,
         // Altura del terreno calculada una sola vez (no en cada frame).
         y: heightAt(x, z),
         z,
-        scale: 0.65 + random() * 0.9,
+        scale,
         rot: random() * Math.PI * 2,
         phase: random() * Math.PI * 2,
       });
+    };
+    // Un tercio enmarca el valle: una franja de arbustos en el borde del
+    // jardín, donde el terreno empieza a subir hacia las colinas.
+    const rim = Math.round(count * 0.34);
+    for (let i = 0; i < rim; i++) {
+      const a = random() * Math.PI * 2;
+      const e = 0.96 + random() * 0.12;
+      add(BOUNDARY.cx + Math.cos(a) * e * BOUNDARY.rx, BOUNDARY.cz + Math.sin(a) * e * BOUNDARY.rz, 0.9 + random() * 1.1);
+    }
+    // Otro tercio bordea los canteros (como en un jardín cuidado).
+    const edges = Math.round(count * 0.4);
+    for (let i = 0; i < edges; i++) {
+      const b = FLOWER_BEDS[Math.floor(random() * FLOWER_BEDS.length)];
+      const a = random() * Math.PI * 2;
+      const r = 1.02 + random() * 0.22;
+      const lx = Math.cos(a) * b.rx * r;
+      const lz = Math.sin(a) * b.rz * r;
+      const c = Math.cos(b.rot);
+      const sn = Math.sin(b.rot);
+      add(b.x + lx * c - lz * sn, b.z + lx * sn + lz * c, 0.6 + random() * 0.6);
+    }
+    // El resto, sueltos por los prados y junto al estanque.
+    while (list.length < count * 0.92) {
+      const before = list.length;
+      if (random() < 0.2) {
+        const a = random() * Math.PI * 2;
+        const r = 1.45 + random() * 0.5;
+        add(POND.x + Math.cos(a) * POND.rx * r, POND.z + Math.sin(a) * POND.rz * r, 0.7 + random() * 0.7);
+      } else {
+        const a = random() * Math.PI * 2;
+        const r = Math.sqrt(random()) * 0.92;
+        const x = BOUNDARY.cx + Math.cos(a) * r * BOUNDARY.rx;
+        const z = BOUNDARY.cz + Math.sin(a) * r * BOUNDARY.rz;
+        if (boundaryRadius(x, z) < 0.93) add(x, z, 0.6 + random() * 0.8);
+      }
+      if (list.length === before && random() < 0.02) break;
     }
     return list;
   }, [count]);

@@ -2,62 +2,66 @@
 
 import { Suspense } from "react";
 import { Sky } from "./Sky";
+import { Atmosphere } from "./Atmosphere";
+import { Landscape } from "./Landscape";
 import { Ground } from "./Ground";
+import { GardenPaths } from "./GardenPaths";
 import { Grass } from "./Grass";
-import { Clouds } from "./Clouds";
 import { Butterflies } from "./Butterflies";
 import { PetalParticles } from "./PetalParticles";
 import { FlowerField } from "./FlowerField";
 import { Shrubs } from "./Shrubs";
 import { GroundLitter } from "./GroundLitter";
+import { SakuraGrove, SakuraPetalFall, GroundPetals } from "./SakuraGrove";
+import { GardenProps, Fireflies } from "./GardenProps";
+import { Water } from "./Water";
+import { Shrine } from "./Shrine";
 import { CameraRig } from "./CameraRig";
 import { SceneTicker } from "./SceneTicker";
+import { PLAZA, SHRINE } from "@/lib/gardenPlan";
 import type { QualitySettings } from "@/lib/quality";
 
+/**
+ * El jardín completo, de lo más lejano a lo más cercano:
+ * cielo y paisaje → terreno, caminos y agua → santuario, árboles y
+ * props → vegetación y flores → partículas.
+ */
 export function GardenScene({ quality }: { quality: QualitySettings }) {
   return (
     <>
       <SceneTicker />
       <CameraRig />
 
-      <fog attach="fog" args={["#c97a6d", 14, 42]} />
-
-      <ambientLight intensity={0.58} color="#ffe3c2" />
-      <directionalLight
-        position={[6, 9, 4]}
-        intensity={1.55}
-        color="#ffd9a0"
-        castShadow={quality.shadows}
-        // En calidad media (la mayoría de los celulares) un mapa de sombras
-        // de 1024 alcanza para sombras suaves y cuesta 4 veces menos.
-        shadow-mapSize={quality.tier === "high" ? [2048, 2048] : [1024, 1024]}
-        shadow-camera-left={-14}
-        shadow-camera-right={14}
-        shadow-camera-top={14}
-        shadow-camera-bottom={-14}
-        shadow-bias={-0.0003}
-      />
-      {/* Luz de relleno tenue y fría desde el lado opuesto: le da algo
-          de profundidad a las sombras sin oscurecer la escena. */}
-      <directionalLight position={[-7, 4, -6]} intensity={0.3} color="#c9a3ff" />
-      <hemisphereLight
-        color="#ffcf9e"
-        groundColor="#1f4f35"
-        intensity={0.5}
-      />
-
+      <Atmosphere shadows={quality.shadows} highQuality={quality.tier === "high"} />
       <Sky />
+      <Landscape farTreeCount={quality.farTreeCount} birdCount={quality.birdCount} />
+
       <Ground shadows={quality.shadows} />
+      <GardenPaths />
+      <Water />
+
+      <Shrine shadows={quality.shadows} />
+      <SakuraGrove detail={quality.canopyDetail} shadows={quality.shadows} />
+      <GardenProps shadows={quality.shadows} />
+
       <Grass count={quality.grassCount} windStrength={1} />
       <Shrubs count={quality.shrubCount} />
       <GroundLitter count={quality.litterCount} />
+      <GroundPetals count={quality.groundPetalCount} />
 
       <Suspense fallback={null}>
-        <FlowerField count={quality.flowerCount} />
+        <FlowerField count={quality.flowerCount} drawDistance={quality.flowerDrawDistance} />
       </Suspense>
 
       <Butterflies count={quality.butterflyCount} />
       <PetalParticles count={quality.petalCount} />
+      <SakuraPetalFall count={quality.sakuraPetalCount} />
+      <Fireflies
+        count={quality.fireflyCount}
+        centerX={PLAZA.x}
+        centerZ={(PLAZA.z + SHRINE.z) / 2}
+        radius={9}
+      />
     </>
   );
 }

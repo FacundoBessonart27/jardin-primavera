@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
-import { heightAt, GARDEN_BOUNDARY_RADIUS, GARDEN_CENTER_Z } from "@/lib/terrain";
-import { CAMERA_POSITIONS } from "@/lib/cameraController";
+import { heightAt } from "@/lib/terrain";
+import {
+  BOUNDARY,
+  PLAZA,
+  SPAWN,
+  pathEdgeDistance,
+  pondRadius,
+  streamDistance,
+} from "@/lib/gardenPlan";
 
 const CLEAR_RADIUS = 1.1;
-const SPAWN_X = CAMERA_POSITIONS.gardenHome.x;
-const SPAWN_Z = CAMERA_POSITIONS.gardenHome.z;
 
 const dummy = new THREE.Object3D();
 
@@ -67,14 +72,16 @@ interface Placement {
 
 function scatter(count: number, seed: number): { x: number; z: number }[] {
   const random = createSeededRandom(seed);
-  const radius = GARDEN_BOUNDARY_RADIUS - 0.4;
   const list: { x: number; z: number }[] = [];
   for (let i = 0; i < count; i++) {
     const angle = random() * Math.PI * 2;
-    const r = Math.sqrt(random()) * radius;
-    const x = Math.cos(angle) * r;
-    const z = GARDEN_CENTER_Z + Math.sin(angle) * r;
-    if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < CLEAR_RADIUS) continue;
+    const r = Math.sqrt(random()) * 0.95;
+    const x = BOUNDARY.cx + Math.cos(angle) * r * BOUNDARY.rx;
+    const z = BOUNDARY.cz + Math.sin(angle) * r * BOUNDARY.rz;
+    if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < CLEAR_RADIUS) continue;
+    if (pathEdgeDistance(x, z) < 0.1) continue;
+    if (pondRadius(x, z) < 1.2 || streamDistance(x, z) < 1.4) continue;
+    if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.radius + 0.3) continue;
     list.push({ x, z });
   }
   return list;
@@ -92,7 +99,7 @@ export function GroundLitter({ count }: { count: number }) {
   const rockGeometry = useMemo(() => buildRockGeometry(), []);
   const leafGeometry = useMemo(() => buildLeafLitterGeometry(), []);
   const rockMaterial = useMemo(
-    () => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }),
+    () => new THREE.MeshLambertMaterial({ vertexColors: true }),
     []
   );
   const leafMaterial = useMemo(
@@ -101,8 +108,7 @@ export function GroundLitter({ count }: { count: number }) {
       // pedía también color por vértice, que esta geometría no tiene: el
       // shader lo leía como negro y las hojas se veían como triángulos
       // oscuros sobre el pasto.
-      new THREE.MeshStandardMaterial({
-        roughness: 0.8,
+      new THREE.MeshLambertMaterial({
         side: THREE.DoubleSide,
       }),
     []

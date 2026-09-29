@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CAMERA_POSITIONS, cameraController } from "./cameraController";
+import { CAMERA_POSITIONS, EYE_HEIGHT, cameraController } from "./cameraController";
 
 /**
  * Estado mutable del "jugador" en primera persona: dónde está parado
@@ -23,8 +23,10 @@ export const playerState = {
   ),
   yaw: Math.PI, // mirando hacia -Z (hacia adentro del jardín)
   pitch: -0.08,
-  eyeHeight: 1.62,
+  eyeHeight: EYE_HEIGHT,
   movementEnabled: true,
+  /** Zoom de la vista (multiplica el campo visual): < 1 acerca, > 1 aleja. */
+  zoom: 1,
   /** Se pone en true la primera vez que se activa el modo caminar,
    * para no reiniciar la posición del jugador en visitas repetidas. */
   spawned: false,

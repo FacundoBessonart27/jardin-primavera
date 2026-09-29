@@ -5,6 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { createSeededRandom } from "@/lib/random";
 import { createWingTexture } from "@/lib/proceduralTextures";
+import { FLOWER_BEDS } from "@/lib/gardenPlan";
 
 interface ButterflyParams {
   color: string;
@@ -79,16 +80,22 @@ function Butterfly({ params }: { params: ButterflyParams }) {
 export function Butterflies({ count }: { count: number }) {
   const list = useMemo<ButterflyParams[]>(() => {
     const random = createSeededRandom(3131);
-    return Array.from({ length: count }, () => ({
-      color: BUTTERFLY_COLORS[Math.floor(random() * BUTTERFLY_COLORS.length)],
-      radiusX: 2 + random() * 3,
-      radiusZ: 2 + random() * 3,
-      centerX: (random() - 0.5) * 12,
-      centerZ: -2 - random() * 8,
-      baseY: 1.1 + random() * 1.2,
-      speed: 0.25 + random() * 0.2,
-      phase: random() * Math.PI * 2,
-    }));
+    // Cada mariposa revolotea sobre un cantero, repartidas a lo largo del
+    // recorrido (las primeras, cerca de la entrada).
+    const step = FLOWER_BEDS.length / Math.max(1, count);
+    return Array.from({ length: count }, (_, i) => {
+      const bed = FLOWER_BEDS[Math.min(FLOWER_BEDS.length - 1, Math.floor(i * step))];
+      return {
+        color: BUTTERFLY_COLORS[Math.floor(random() * BUTTERFLY_COLORS.length)],
+        radiusX: bed.rx * (0.6 + random() * 0.5),
+        radiusZ: bed.rz * (0.6 + random() * 0.5),
+        centerX: bed.x,
+        centerZ: bed.z,
+        baseY: 1.1 + random() * 1.1,
+        speed: 0.25 + random() * 0.2,
+        phase: random() * Math.PI * 2,
+      };
+    });
   }, [count]);
 
   return (

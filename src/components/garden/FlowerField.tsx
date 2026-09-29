@@ -14,6 +14,7 @@ import { heightAt } from "@/lib/terrain";
 import { playerState } from "@/lib/playerState";
 import { createSoftDiscTexture } from "@/lib/proceduralTextures";
 import { registerFlowerMesh, unregisterFlowerMesh, trySelectPlacement } from "@/lib/flowerRegistry";
+import { SUN_DIRECTION } from "@/lib/sun";
 
 interface SpeciesGroupProps {
   speciesId: string;
@@ -21,6 +22,12 @@ interface SpeciesGroupProps {
   placements: FlowerPlacement[];
   isSpecial: boolean;
   bloom: number;
+  /** Centro y radio (en el plano) del sector que dibuja este grupo. */
+  centerX: number;
+  centerZ: number;
+  radius: number;
+  /** Más allá de esta distancia a la cámara, las flores se ocultan. */
+  drawDistance: number;
 }
 
 const dummy = new THREE.Object3D();
@@ -34,11 +41,10 @@ const _brushQuat = new THREE.Quaternion();
 const BRUSH_RADIUS = 0.85;
 const BRUSH_MAX_TILT = 0.38;
 
-// Dirección (normalizada) de la luz clave de la escena (ver
-// GardenScene: directionalLight en [6, 9, 4]) y su color cálido,
-// reutilizados para una simulación liviana de subsuperficie en los
-// pétalos (ver material más abajo).
-const SSS_LIGHT_DIR = new THREE.Vector3(6, 9, 4).normalize();
+// Dirección del sol (ver lib/sun) y un color cálido, reutilizados para
+// una simulación liviana de subsuperficie en los pétalos (ver material
+// más abajo).
+const SSS_LIGHT_DIR = SUN_DIRECTION;
 const SSS_LIGHT_COLOR = new THREE.Color("#ffcf8a");
 
 /** Distancia (en el plano) a la que una flor empieza a "notar" al
@@ -136,7 +142,21 @@ function getFlowerMaterial(): THREE.MeshPhysicalMaterial {
   return mat;
 }
 
-function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: SpeciesGroupProps) {
+/** Tramo (en metros) en el que las flores lejanas se achican hasta
+ * desaparecer, en vez de cortarse de golpe. */
+const DRAW_FADE = 7;
+
+function SpeciesGroup({
+  speciesId,
+  visual,
+  placements,
+  isSpecial,
+  bloom,
+  centerX,
+  centerZ,
+  radius,
+  drawDistance,
+}: SpeciesGroupProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const geometry = useMemo(
     () => getFlowerGeometry(speciesId, visual, "field", bloom),
@@ -217,12 +237,21 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
     return () => unregisterFlowerMesh(mesh);
   }, [placements, speciesId, visual.colorVariance, geometry]);
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
     const mesh = meshRef.current;
     if (!mesh) return;
 
     windUniforms.uTime.value = sceneUniforms.windTime;
     windUniforms.uWindStrength.value = sceneUniforms.windStrength;
+
+    // Sectores lejanos: ni se dibujan ni se recalculan (la niebla ya los
+    // borra casi por completo a esa distancia).
+    const camX = camera.position.x;
+    const camZ = camera.position.z;
+    const groupDistance = Math.hypot(centerX - camX, centerZ - camZ) - radius;
+    const inRange = groupDistance < drawDistance;
+    if (mesh.visible !== inRange) mesh.visible = inRange;
+    if (!inRange) return;
 
     const { hoveredInstanceId, selected, foundSpecialFlower, foundMessageIds, phase } =
       useExperienceStore.getState();
@@ -302,6 +331,11 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
         Math.cos(t * 1.1 + p.windPhase * 1.3) * 0.025 * sceneUniforms.windStrength * reaction;
 
       const specialPulse = isSpecial && !foundSpecialFlower ? 1 + Math.sin(t * 1.8) * 0.015 : 1;
+      const camDistance = Math.hypot(p.position[0] - camX, p.position[2] - camZ);
+      const distanceFade =
+        camDistance > drawDistance - DRAW_FADE
+          ? Math.max(0, (drawDistance - camDistance) / DRAW_FADE)
+          : 1;
 
       dummy.position.set(p.position[0], ground[i] + (isSelected ? 0.06 : 0), p.position[2]);
       dummy.rotation.set(windTilt + p.leanX, p.rotationY + windSway, windSway * 0.6 + p.leanZ);
@@ -311,7 +345,7 @@ function SpeciesGroup({ speciesId, visual, placements, isSpecial, bloom }: Speci
         _brushQuat.setFromAxisAngle(_axis.set(bz, 0, -bx), brush[i] * BRUSH_MAX_TILT);
         dummy.quaternion.premultiply(_brushQuat);
       }
-      const s = revealScale * p.scaleVariance * bump * specialPulse;
+      const s = revealScale * p.scaleVariance * bump * specialPulse * distanceFade;
       dummy.scale.set(s * p.stretch, s * p.heightVar, s * p.stretch);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
@@ -431,38 +465,86 @@ function SpecialFlowerAura() {
 // 2 = flor completamente abierta.
 const BLOOM_BY_VARIANT: Record<0 | 1 | 2, number> = { 0: 0.12, 1: 0.55, 2: 1 };
 
-export function FlowerField({ count }: { count: number }) {
-  const layout = useMemo(() => generateFieldLayout(count), [count]);
+/** Tamaño (m) de las celdas en que se agrupan las flores: cada celda es
+ * su propia malla instanciada, así la cámara descarta las que no ve y
+ * las sombras sólo procesan las cercanas. */
+const CHUNK_SIZE = 14;
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, FlowerPlacement[]>();
+interface Chunk {
+  key: string;
+  speciesIndex: number;
+  variant: 0 | 1 | 2;
+  placements: FlowerPlacement[];
+  centerX: number;
+  centerZ: number;
+  radius: number;
+}
+
+export function FlowerField({ count, drawDistance }: { count: number; drawDistance: number }) {
+  const layout = useMemo(() => generateFieldLayout(count), [count]);
+  const allSpecies = useMemo(() => [...regularFlowerSpecies, specialFlower], []);
+
+  const chunks = useMemo(() => {
+    const speciesIndex = new Map(allSpecies.map((s, i) => [s.id, i]));
+    const map = new Map<string, Chunk>();
     for (const placement of layout) {
-      const key = `${placement.speciesId}:${placement.bloomVariant}`;
-      const list = map.get(key) ?? [];
-      list.push(placement);
-      map.set(key, list);
+      const [x, , z] = placement.position;
+      const cell = `${Math.floor(x / CHUNK_SIZE)}_${Math.floor(z / CHUNK_SIZE)}`;
+      const key = `${placement.speciesId}:${placement.bloomVariant}:${cell}`;
+      let chunk = map.get(key);
+      if (!chunk) {
+        chunk = {
+          key,
+          speciesIndex: speciesIndex.get(placement.speciesId) ?? 0,
+          variant: placement.bloomVariant,
+          placements: [],
+          centerX: 0,
+          centerZ: 0,
+          radius: 0,
+        };
+        map.set(key, chunk);
+      }
+      chunk.placements.push(placement);
     }
-    return map;
-  }, [layout]);
+    for (const chunk of map.values()) {
+      let cx = 0;
+      let cz = 0;
+      for (const p of chunk.placements) {
+        cx += p.position[0];
+        cz += p.position[2];
+      }
+      cx /= chunk.placements.length;
+      cz /= chunk.placements.length;
+      let r = 0;
+      for (const p of chunk.placements) {
+        r = Math.max(r, Math.hypot(p.position[0] - cx, p.position[2] - cz));
+      }
+      chunk.centerX = cx;
+      chunk.centerZ = cz;
+      chunk.radius = r + 0.5;
+    }
+    return [...map.values()];
+  }, [layout, allSpecies]);
 
   return (
     <group>
-      {[...regularFlowerSpecies, specialFlower].flatMap((species) =>
-        ([0, 1, 2] as const).map((variant) => {
-          const placements = grouped.get(`${species.id}:${variant}`);
-          if (!placements || placements.length === 0) return null;
-          return (
-            <SpeciesGroup
-              key={`${species.id}:${variant}`}
-              speciesId={species.id}
-              visual={species.visual}
-              placements={placements}
-              isSpecial={Boolean(species.isSpecial)}
-              bloom={BLOOM_BY_VARIANT[variant]}
-            />
-          );
-        })
-      )}
+      {chunks.map((chunk) => {
+        const species = allSpecies[chunk.speciesIndex];
+        return (
+          <SpeciesGroup
+            key={chunk.key}
+            speciesId={species.id}
+            visual={species.visual}
+            placements={chunk.placements}
+            isSpecial={Boolean(species.isSpecial)}
+            bloom={BLOOM_BY_VARIANT[chunk.variant]}
+            centerX={chunk.centerX}
+            centerZ={chunk.centerZ}
+            radius={chunk.radius}
+            drawDistance={drawDistance}
+          />
+        );
+      })}
       <SpecialFlowerAura />
     </group>
   );

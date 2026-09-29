@@ -1,7 +1,19 @@
 import { regularFlowerSpecies, specialFlower, type FlowerSpecies } from "@/data/flowers";
 import { createSeededRandom, weightedIndex } from "@/lib/random";
-import { GARDEN_BOUNDARY_RADIUS, GARDEN_CENTER_Z } from "@/lib/terrain";
-import { CAMERA_POSITIONS } from "@/lib/cameraController";
+import {
+  BOUNDARY,
+  FLOWER_BEDS,
+  OBSTACLES,
+  PLAZA,
+  SHRINE,
+  SPAWN,
+  bedRadius,
+  boundaryRadius,
+  pathEdgeDistance,
+  pondRadius,
+  streamDistance,
+} from "@/lib/gardenPlan";
+import { SUN_DIRECTION } from "@/lib/sun";
 import { giftConfig } from "@/config/giftConfig";
 
 export interface FlowerPlacement {
@@ -40,30 +52,22 @@ export interface FlowerPlacement {
 }
 
 const FIELD_SEED = 20260921;
-const FIELD_RADIUS = GARDEN_BOUNDARY_RADIUS - 1.2;
-const CLEAR_RADIUS = 1.2; // zona despejada alrededor del punto de partida
-/** Parte del total reservada para flores chicas que rellenan huecos
- * alrededor de las demás (mismo presupuesto de flores que antes). */
-const FILLER_SHARE = 0.24;
 
-/** Lugar fijo de la flor especial: escondida entre las demás pero
- * determinística, para que "encontrarla" sea posible de repetir. */
-export const SPECIAL_FLOWER_POSITION = { x: -2.6, z: -3.4 };
+/** Lugar fijo de la flor especial: el centro del círculo de flores de
+ * la plaza, frente al santuario (el destino del recorrido). */
+export const SPECIAL_FLOWER_POSITION = { x: PLAZA.x, z: PLAZA.z };
 
-const SPAWN_X = CAMERA_POSITIONS.gardenHome.x;
-const SPAWN_Z = CAMERA_POSITIONS.gardenHome.z;
+const SPAWN_X = SPAWN.x;
+const SPAWN_Z = SPAWN.z;
 
 /** Rotación Y que orienta el +X local de una flor (hacia donde inclina
- * su cabeza, ver flowerGeometry) hacia la luz clave de la escena
- * (GardenScene: directionalLight en [6, 9, 4]). */
-const SUN_YAW = Math.atan2(-4, 6);
+ * su cabeza, ver flowerGeometry) hacia el sol del atardecer. */
+const SUN_YAW = Math.atan2(-SUN_DIRECTION.z, SUN_DIRECTION.x);
 
-interface Patch {
-  x: number;
-  z: number;
-  radius: number;
-  speciesId: string;
-}
+/** Parte del total para el círculo de flores de la plaza y para las
+ * flores silvestres sueltas de los prados. */
+const RING_SHARE = 0.07;
+const WILD_SHARE = 0.08;
 
 interface Placed {
   x: number;
@@ -75,86 +79,8 @@ interface Placed {
   speciesId: string;
 }
 
-function hash2(x: number, y: number): number {
-  const s = Math.sin(x * 127.1 + y * 311.7 + 17.3) * 43758.5453;
-  return s - Math.floor(s);
-}
-
-function valueNoise(x: number, y: number): number {
-  const xi = Math.floor(x);
-  const yi = Math.floor(y);
-  const xf = x - xi;
-  const yf = y - yi;
-  const sx = xf * xf * (3 - 2 * xf);
-  const sy = yf * yf * (3 - 2 * yf);
-  const a = hash2(xi, yi);
-  const b = hash2(xi + 1, yi);
-  const c = hash2(xi, yi + 1);
-  const d = hash2(xi + 1, yi + 1);
-  const top = a + (b - a) * sx;
-  const bottom = c + (d - c) * sx;
-  return top + (bottom - top) * sy;
-}
-
-/** Densidad natural del campo (0..1): zonas tupidas y claros suaves,
- * sin ningún patrón regular. */
-function densityAt(x: number, z: number): number {
-  return valueNoise(x * 0.28 + 3.1, z * 0.28 - 1.7) * 0.7 + valueNoise(x * 0.7, z * 0.7) * 0.3;
-}
-
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
-}
-
 function footprintOf(species: FlowerSpecies): number {
   return 0.13 + 0.2 * species.visual.scale * (species.filler ? 0.7 : 1);
-}
-
-/** Genera "manchones" de una misma especie repartidos por el jardín,
- * imitando cómo se agrupan naturalmente las flores en un jardín real
- * (drifts de color) en vez de un salpicado uniforme tipo confeti. */
-function generatePatches(random: () => number, weights: number[]): Patch[] {
-  // Cada especie tiene al menos un manchón propio (ninguna queda sin
-  // aparecer por azar); los manchones extra se reparten por peso.
-  const order = regularFlowerSpecies.map((_, i) => i);
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  const count = order.length + 4 + Math.floor(random() * 6);
-  const patches: Patch[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const angle = random() * Math.PI * 2;
-    const r = Math.sqrt(random()) * (FIELD_RADIUS - 1);
-    const speciesIndex = i < order.length ? order[i] : weightedIndex(random, weights);
-    patches.push({
-      x: Math.cos(angle) * r,
-      z: GARDEN_CENTER_Z + Math.sin(angle) * r,
-      radius: 1 + random() * 2.4,
-      speciesId: regularFlowerSpecies[speciesIndex].id,
-    });
-  }
-
-  return patches;
-}
-
-function nearestPatch(
-  x: number,
-  z: number,
-  patches: Patch[]
-): { patch: Patch; dist: number } | null {
-  let best: Patch | null = null;
-  let bestDist = Infinity;
-  for (const patch of patches) {
-    const d = Math.hypot(x - patch.x, z - patch.z);
-    if (d < bestDist) {
-      bestDist = d;
-      best = patch;
-    }
-  }
-  return best ? { patch: best, dist: bestDist } : null;
 }
 
 function fitsAt(x: number, z: number, footprint: number, placed: Placed[]): boolean {
@@ -163,6 +89,27 @@ function fitsAt(x: number, z: number, footprint: number, placed: Placed[]): bool
     const dx = x - p.x;
     const dz = z - p.z;
     if (dx * dx + dz * dz < min * min) return false;
+  }
+  return true;
+}
+
+/** Lugar apto para una flor: fuera de caminos, agua, plaza, santuario
+ * y del tronco de árboles, faroles y bancos. */
+function isFlowerSpot(x: number, z: number, allowPlaza = false): boolean {
+  if (boundaryRadius(x, z) > 0.93) return false;
+  if (pathEdgeDistance(x, z) < 0.22) return false;
+  if (pondRadius(x, z) < 1.3 || streamDistance(x, z) < 1.7) return false;
+  if (!allowPlaza && Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.radius + 0.35) return false;
+  if (
+    Math.abs(x - SHRINE.x) < SHRINE.plinthW / 2 + 0.4 &&
+    Math.abs(z - SHRINE.z) < SHRINE.plinthD / 2 + SHRINE.stepsDepth + 0.4
+  ) {
+    return false;
+  }
+  if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < 1.2) return false;
+  for (const o of OBSTACLES) {
+    const r = o.r + 0.18;
+    if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r) return false;
   }
   return true;
 }
@@ -182,83 +129,46 @@ function randomBloom(random: () => number): 0 | 1 | 2 {
 }
 
 function revealFor(x: number, z: number, random: () => number): number {
-  const distanceFromStart = Math.hypot(x - SPAWN_X, z - SPAWN_Z) / (FIELD_RADIUS * 1.4);
-  return Math.max(0, Math.min(0.85, distanceFromStart * 0.7 + random() * 0.25));
+  const distanceFromStart = Math.hypot(x - SPAWN_X, z - SPAWN_Z) / 60;
+  return Math.max(0, Math.min(0.85, distanceFromStart * 0.8 + random() * 0.25));
 }
+
+const speciesById = new Map(regularFlowerSpecies.map((s) => [s.id, s]));
 
 /**
  * Genera la disposición de todas las flores del jardín una sola vez
- * (seed fijo → siempre el mismo jardín entre sesiones). Combina:
- *  - manchones por especie (agrupamiento natural), con flores más
- *    chicas y jóvenes hacia los bordes de cada manchón;
- *  - un ruido de densidad que crea zonas tupidas y claros;
- *  - separación según el tamaño de cada especie (no una distancia fija
- *    que termina pareciendo una grilla);
- *  - algunas flores protagonistas, más grandes y con espacio propio;
- *  - una segunda pasada de flores chicas de relleno que se acomodan
- *    alrededor de las demás, como en un cantero real.
+ * (seed fijo → siempre el mismo jardín entre sesiones), organizada por
+ * sectores:
+ *  - cada cantero (ver gardenPlan.FLOWER_BEDS) tiene una especie
+ *    dominante y algunas acompañantes, más tupido al centro y con
+ *    flores más chicas hacia el borde orgánico;
+ *  - entre canteros quedan prados de césped con pocas flores
+ *    silvestres sueltas (zonas tranquilas);
+ *  - en la plaza, un círculo de flores rodea a la flor especial;
+ *  - nunca hay flores sobre los caminos, el agua o los props.
  */
 export function generateFieldLayout(count: number): FlowerPlacement[] {
   const random = createSeededRandom(FIELD_SEED);
-  const weights = regularFlowerSpecies.map((s) => s.fieldWeight);
-  const patches = generatePatches(random, weights);
-  const fillers = regularFlowerSpecies.filter((s) => s.filler);
-  const fillerWeights = fillers.map((s) => s.fieldWeight);
-
   const result: FlowerPlacement[] = [];
-  // El lugar de la flor especial queda reservado desde el principio: las
-  // demás crecen alrededor, pero ninguna encima.
   const specialX = SPECIAL_FLOWER_POSITION.x;
   const specialZ = SPECIAL_FLOWER_POSITION.z;
   const placed: Placed[] = [
-    { x: specialX, z: specialZ, footprint: 0.45, hero: true, speciesId: specialFlower.id },
+    { x: specialX, z: specialZ, footprint: 0.5, hero: true, speciesId: specialFlower.id },
   ];
-  const mainCount = Math.round(count * (1 - FILLER_SHARE));
 
-  const tryPlaceMain = (x: number, z: number, seedSpecies?: FlowerSpecies): boolean => {
-    if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < CLEAR_RADIUS) return false;
-    if (Math.hypot(x, z - GARDEN_CENTER_Z) > FIELD_RADIUS) return false;
-
-    const near = nearestPatch(x, z, patches);
-    const insidePatch = Boolean(near && near.dist < near.patch.radius);
-    if (!seedSpecies) {
-      const density = densityAt(x, z);
-      const acceptance = insidePatch
-        ? 0.55 + 0.45 * density
-        : 0.05 + 0.85 * smoothstep(0.3, 0.8, density);
-      if (random() > acceptance) return false;
-    }
-
-    const species =
-      seedSpecies ??
-      (insidePatch && random() < 0.78
-        ? regularFlowerSpecies.find((s) => s.id === near!.patch.speciesId)!
-        : regularFlowerSpecies[weightedIndex(random, weights)]);
-
-    const hero =
-      !seedSpecies &&
-      species.visual.scale >= 0.85 &&
-      random() < 0.22 &&
-      !placed.some((p) => p.hero && Math.hypot(x - p.x, z - p.z) < 2.2);
-    const footprint = footprintOf(species) * (insidePatch ? 0.72 : 1) * (hero ? 1.35 : 1);
-    if (!fitsAt(x, z, footprint, placed)) return false;
-    placed.push({ x, z, footprint, hero, speciesId: species.id });
-
-    let scaleVariance: number;
-    if (hero) {
-      scaleVariance = 1.18 + random() * 0.2;
-    } else if (insidePatch) {
-      const edge = near!.dist / near!.patch.radius;
-      scaleVariance = (0.95 + random() * 0.22) * (1 - 0.2 * Math.pow(edge, 1.5));
-    } else {
-      scaleVariance = 0.78 + random() * 0.3;
-    }
-
+  const push = (
+    species: FlowerSpecies,
+    x: number,
+    z: number,
+    scaleVariance: number,
+    bloomVariant: 0 | 1 | 2,
+    rotationY = orientation(species, random)
+  ) => {
     result.push({
       id: `${species.id}-${result.length}`,
       speciesId: species.id,
       position: [x, 0, z],
-      rotationY: orientation(species, random),
+      rotationY,
       scaleVariance,
       isSpecial: false,
       revealThreshold: revealFor(x, z, random),
@@ -267,84 +177,110 @@ export function generateFieldLayout(count: number): FlowerPlacement[] {
       leanZ: (random() - 0.5) * 0.16,
       stretch: 0.9 + random() * 0.2,
       heightVar: 0.9 + random() * 0.2,
-      bloomVariant: hero ? 2 : randomBloom(random),
+      bloomVariant,
     });
-    return true;
   };
 
-  // Primero, una planta madura en el centro de cada manchón: así cada
-  // especie aparece en el jardín en cualquier nivel de calidad, y los
-  // manchones crecen alrededor de ella.
-  for (const patch of patches) {
-    if (result.length >= mainCount) break;
-    const seed = regularFlowerSpecies.find((s) => s.id === patch.speciesId);
-    for (let k = 0; k < 10; k++) {
+  // --- Círculo de flores de la plaza ------------------------------------
+  const ringCount = Math.max(10, Math.round(count * RING_SHARE));
+  const ringSpecies = ["rosa", "peonia", "jazmin", "cerezo"];
+  const inner = Math.round(ringCount * 0.42);
+  for (let i = 0; i < ringCount; i++) {
+    const outerRing = i >= inner;
+    const k = outerRing ? i - inner : i;
+    const n = outerRing ? ringCount - inner : inner;
+    const a = (k / n) * Math.PI * 2 + (outerRing ? Math.PI / n : 0);
+    const r = outerRing ? 1.5 : 0.95;
+    const x = specialX + Math.cos(a) * r;
+    const z = specialZ + Math.sin(a) * r;
+    const species = speciesById.get(
+      outerRing ? ringSpecies[2 + (k % 2)] : ringSpecies[k % 2]
+    )!;
+    placed.push({ x, z, footprint: 0.2, hero: false, speciesId: species.id });
+    // Cabezas hacia afuera: se ven de frente al rodear el círculo.
+    push(species, x, z, outerRing ? 0.82 : 0.95, 2, Math.atan2(-(z - specialZ), x - specialX));
+  }
+
+  // --- Canteros ---------------------------------------------------------
+  const wildCount = Math.round(count * WILD_SHARE);
+  const bedBudget = count - ringCount - wildCount;
+  const weights = FLOWER_BEDS.map((b) => b.rx * b.rz * (0.35 + 0.65 * b.density));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+  FLOWER_BEDS.forEach((bed, bi) => {
+    const target = Math.max(3, Math.round((bedBudget * weights[bi]) / totalWeight));
+    const dominant = speciesById.get(bed.species)!;
+    const companions = bed.companions.map((id) => speciesById.get(id)!).filter(Boolean);
+    let planted = 0;
+    let heroes = 0;
+    const cos = Math.cos(bed.rot);
+    const sin = Math.sin(bed.rot);
+    for (let attempt = 0; attempt < target * 40 && planted < target; attempt++) {
+      // Punto al azar dentro de la elipse del cantero (con su borde
+      // irregular), un poco más probable hacia el centro.
       const a = random() * Math.PI * 2;
-      const d = k === 0 ? 0 : random() * patch.radius * 0.7;
-      if (tryPlaceMain(patch.x + Math.cos(a) * d, patch.z + Math.sin(a) * d, seed)) break;
+      const rr = Math.pow(random(), 0.62) * 1.15;
+      const lx = Math.cos(a) * rr * bed.rx;
+      const lz = Math.sin(a) * rr * bed.rz;
+      const x = bed.x + lx * cos - lz * sin;
+      const z = bed.z + lx * sin + lz * cos;
+      const r = bedRadius(bed, x, z);
+      if (r > 1) continue;
+      if (!isFlowerSpot(x, z)) continue;
+
+      const edgeMix = 0.9 - 0.3 * r * r;
+      const species =
+        companions.length === 0 || random() < edgeMix
+          ? dominant
+          : companions[Math.floor(random() * companions.length)];
+
+      const hero =
+        heroes < 2 && r < 0.45 && species.visual.scale >= 0.85 && random() < 0.35;
+      // Los canteros ralos (prados) dejan más aire entre flores.
+      const spacing = 1 + (1 - bed.density) * 1.4;
+      const footprint = footprintOf(species) * 0.74 * spacing * (hero ? 1.3 : 1);
+      if (!fitsAt(x, z, footprint, placed)) continue;
+      placed.push({ x, z, footprint, hero, speciesId: species.id });
+      if (hero) heroes++;
+      planted++;
+
+      const scaleVariance = hero
+        ? 1.18 + random() * 0.18
+        : (0.95 + random() * 0.22) * (1 - 0.2 * Math.pow(r, 1.5));
+      push(species, x, z, scaleVariance, hero ? 2 : randomBloom(random));
     }
-  }
+  });
 
-  let attempts = 0;
-  while (result.length < mainCount && attempts < count * 60) {
-    attempts++;
-    const angle = random() * Math.PI * 2;
-    const r = Math.sqrt(random()) * FIELD_RADIUS;
-    tryPlaceMain(Math.cos(angle) * r, GARDEN_CENTER_Z + Math.sin(angle) * r);
-  }
-
-  // Relleno: flores chicas que se acomodan alrededor de las ya plantadas.
-  attempts = 0;
-  while (result.length < count && fillers.length > 0 && attempts < count * 60) {
-    attempts++;
-    const anchor = placed[Math.floor(random() * placed.length)];
-    const angle = random() * Math.PI * 2;
-    const dist = anchor.footprint + 0.1 + random() * 0.55;
-    const x = anchor.x + Math.cos(angle) * dist;
-    const z = anchor.z + Math.sin(angle) * dist;
-
-    if (Math.hypot(x, z - GARDEN_CENTER_Z) > FIELD_RADIUS) continue;
-    if (Math.hypot(x - SPAWN_X, z - SPAWN_Z) < CLEAR_RADIUS) continue;
-
-    // Si la vecina ya es de relleno, lo más probable es que se repita la
-    // especie (pequeñas colonias de margaritas, jazmines...).
-    const anchorSpecies = regularFlowerSpecies.find((s) => s.id === anchor.speciesId);
-    const species =
-      anchorSpecies?.filler && random() < 0.6
-        ? anchorSpecies
-        : fillers[weightedIndex(random, fillerWeights)];
-
-    const footprint = footprintOf(species) * 0.8;
+  // --- Flores silvestres sueltas en los prados ----------------------------
+  const fillers = regularFlowerSpecies.filter((s) => s.filler || s.id === "calendula" || s.id === "cosmos");
+  const fillerWeights = fillers.map((s) => s.fieldWeight);
+  let wild = 0;
+  for (let attempt = 0; attempt < wildCount * 60 && wild < wildCount; attempt++) {
+    const a = random() * Math.PI * 2;
+    const rr = Math.sqrt(random()) * 0.9;
+    const x = BOUNDARY.cx + Math.cos(a) * rr * BOUNDARY.rx;
+    const z = BOUNDARY.cz + Math.sin(a) * rr * BOUNDARY.rz;
+    if (FLOWER_BEDS.some((b) => bedRadius(b, x, z) < 1.25)) continue;
+    if (pathEdgeDistance(x, z) < 0.6) continue;
+    if (!isFlowerSpot(x, z)) continue;
+    const species = fillers[weightedIndex(random, fillerWeights)];
+    const footprint = footprintOf(species) * 2.2;
     if (!fitsAt(x, z, footprint, placed)) continue;
     placed.push({ x, z, footprint, hero: false, speciesId: species.id });
-
-    result.push({
-      id: `${species.id}-${result.length}`,
-      speciesId: species.id,
-      position: [x, 0, z],
-      rotationY: orientation(species, random),
-      scaleVariance: 0.72 + random() * 0.3,
-      isSpecial: false,
-      revealThreshold: revealFor(x, z, random),
-      windPhase: random() * Math.PI * 2,
-      leanX: (random() - 0.5) * 0.18,
-      leanZ: (random() - 0.5) * 0.18,
-      stretch: 0.9 + random() * 0.2,
-      heightVar: 0.88 + random() * 0.22,
-      bloomVariant: randomBloom(random),
-    });
+    wild++;
+    push(species, x, z, 0.7 + random() * 0.25, randomBloom(random));
   }
 
   assignMessageFlowers(result, giftConfig.hiddenWhispers.length);
 
-  // La flor especial: mira hacia el punto de partida para que su cara se
-  // vea al llegar.
+  // La flor especial: en el centro del círculo, mirando hacia quien
+  // llega por el camino principal (desde el sur).
   result.push({
     id: "special-0",
     speciesId: specialFlower.id,
     position: [specialX, 0, specialZ],
-    rotationY: Math.atan2(-(SPAWN_Z - specialZ), SPAWN_X - specialX),
-    scaleVariance: 1,
+    rotationY: Math.atan2(-1, 0),
+    scaleVariance: 1.08,
     isSpecial: true,
     revealThreshold: 0.55,
     windPhase: 1.2,
@@ -373,6 +309,7 @@ function assignMessageFlowers(placements: FlowerPlacement[], count: number) {
     return (
       p.bloomVariant === 2 &&
       p.scaleVariance >= 0.85 &&
+      Math.hypot(x - PLAZA.x, z - PLAZA.z) > PLAZA.radius + 1 &&
       Math.hypot(x - SPAWN_X, z - SPAWN_Z) > 3.5 &&
       Math.hypot(x - SPECIAL_FLOWER_POSITION.x, z - SPECIAL_FLOWER_POSITION.z) > 2.5
     );

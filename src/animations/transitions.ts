@@ -8,7 +8,7 @@ import {
   forwardFromLook,
   syncPlayerStateFromCamera,
 } from "@/lib/playerState";
-import { heightAt } from "@/lib/terrain";
+import { walkHeightAt } from "@/lib/terrain";
 
 /**
  * Transición de "Entrar al jardín": la cámara avanza desde la vista
@@ -98,7 +98,12 @@ export function playEnterGardenTransition(prefersReducedMotion: boolean) {
 /** Acerca la cámara suavemente hacia una flor seleccionada, pausando
  * el movimiento del jugador mientras el panel está abierto (y
  * liberando el mouse si estaba bloqueado, para poder usar la UI). */
-export function focusOnFlower(position: [number, number, number]) {
+export function focusOnFlower(
+  position: [number, number, number],
+  /** Distancia y altura del encuadre (la flor especial se mira desde un
+   * poco más lejos y más alto, por encima del círculo de flores). */
+  framing: { distance: number; height: number } = { distance: 1.6, height: 1.1 }
+) {
   const camera = cameraController.camera;
   if (!camera) return;
 
@@ -112,9 +117,9 @@ export function focusOnFlower(position: [number, number, number]) {
   const dir = camera.position.clone().sub(flowerPoint).normalize();
 
   const targetPos = {
-    x: x + dir.x * 1.6,
-    y: y + 1.1,
-    z: z + dir.z * 1.6,
+    x: x + dir.x * framing.distance,
+    y: y + framing.height,
+    z: z + dir.z * framing.distance,
   };
 
   gsap.to(camera.position, {
@@ -136,7 +141,7 @@ export function returnToGardenHome() {
   if (!camera) return;
   cameraController.finaleSettled = false;
 
-  const groundY = heightAt(playerState.position.x, playerState.position.z);
+  const groundY = walkHeightAt(playerState.position.x, playerState.position.z);
   const targetPos = {
     x: playerState.position.x,
     y: groundY + playerState.eyeHeight,
@@ -174,6 +179,17 @@ export function pullBackForFinale() {
   if (!camera) return;
   const finale = CAMERA_POSITIONS.finale;
   cameraController.finaleSettled = false;
+
+  const lens = { fov: camera.fov };
+  gsap.to(lens, {
+    fov: finale.fov,
+    duration: 3.2,
+    ease: "power2.inOut",
+    onUpdate: () => {
+      camera.fov = lens.fov;
+      camera.updateProjectionMatrix();
+    },
+  });
 
   gsap.to(camera.position, {
     x: finale.x,

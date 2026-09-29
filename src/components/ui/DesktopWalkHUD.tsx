@@ -31,7 +31,7 @@ export function DesktopWalkHUD() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
           >
-            Hacé click para caminar · WASD + mouse · Shift para correr
+            Hacé click para caminar · WASD + mouse · Shift para correr · rueda para acercar
           </motion.div>
         )}
       </AnimatePresence>

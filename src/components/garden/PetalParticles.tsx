@@ -12,6 +12,8 @@ interface PetalParticlesProps {
 }
 
 const PETAL_COLORS = ["#ffd6e8", "#ffe9b8", "#ffffff", "#ffb3c6"];
+/** Mitad del lado del volumen de pétalos alrededor de la cámara. */
+const HALF = 17;
 
 /** Pétalos flotando lentamente en el aire, cayendo y meciéndose. */
 export function PetalParticles({ count }: PetalParticlesProps) {
@@ -44,12 +46,18 @@ export function PetalParticles({ count }: PetalParticlesProps) {
     return { positions, seeds, colors };
   }, [count]);
 
-  useFrame((_, delta) => {
+  useFrame(({ camera }, rawDelta) => {
     const points = pointsRef.current;
     if (!points) return;
+    const delta = Math.min(rawDelta, 1 / 20);
     const posAttr = points.geometry.getAttribute(
       "position"
     ) as THREE.BufferAttribute;
+    // Los pétalos flotan en un volumen que acompaña a la cámara: se ven
+    // en cualquier rincón del jardín con la misma cantidad de partículas.
+    const cx = camera.position.x;
+    const cz = camera.position.z;
+    const cy = camera.position.y;
 
     for (let i = 0; i < count; i++) {
       const fallSpeed = seeds[i * 3 + 1];
@@ -57,14 +65,16 @@ export function PetalParticles({ count }: PetalParticlesProps) {
       const phase = seeds[i * 3] + sceneUniforms.windTime * 0.6;
 
       let y = posAttr.getY(i) - fallSpeed * delta;
-      if (y < -0.5) y = 13 + Math.random() * 2;
+      if (y < cy - 2.5) y = cy + 9 + Math.random() * 3;
 
-      const baseX = ((i * 37) % 34) - 17;
-      const sway = Math.sin(phase) * swayAmp * 0.15;
+      let x = posAttr.getX(i) + (Math.sin(phase) * swayAmp * 0.15 + 0.08) * delta;
+      let z = posAttr.getZ(i) + Math.cos(phase * 0.8) * swayAmp * 0.1 * delta;
+      if (x - cx > HALF) x -= HALF * 2;
+      else if (cx - x > HALF) x += HALF * 2;
+      if (z - cz > HALF) z -= HALF * 2;
+      else if (cz - z > HALF) z += HALF * 2;
 
-      posAttr.setY(i, y);
-      posAttr.setX(i, posAttr.getX(i) + sway * delta);
-      if (Math.abs(posAttr.getX(i) - baseX) > 6) posAttr.setX(i, baseX);
+      posAttr.setXYZ(i, x, y, z);
     }
     posAttr.needsUpdate = true;
   });

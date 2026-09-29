@@ -26,6 +26,8 @@ interface LookTouchInfo {
  *    mirar en primera persona en vez de orbitar).
  *  - Un toque corto (sin arrastre) sobre una flor la selecciona,
  *    igual que antes.
+ *  - Pellizcar con dos dedos (fuera del joystick) acerca o aleja la
+ *    vista; mientras se pellizca, la cámara no gira.
  */
 export function TouchControls() {
   const joystickRef = useRef<HTMLDivElement>(null);
@@ -33,6 +35,7 @@ export function TouchControls() {
   const [joystickActive, setJoystickActive] = useState(false);
   const moveTouchId = useRef<number | null>(null);
   const lookTouches = useRef<Map<number, LookTouchInfo>>(new Map());
+  const pinchDistance = useRef<number | null>(null);
 
   const updateJoystickFromPoint = (clientX: number, clientY: number) => {
     const base = joystickRef.current;
@@ -99,6 +102,24 @@ export function TouchControls() {
     };
 
     const onTouchMove = (e: TouchEvent) => {
+      // Dos dedos fuera del joystick: pellizco para el zoom.
+      const pinching = Array.from(e.touches).filter((t) => lookTouches.current.has(t.identifier));
+      if (pinching.length >= 2) {
+        const [a, b] = pinching;
+        const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (pinchDistance.current !== null && distance > 10) {
+          touchInputState.pinchScale *= pinchDistance.current / distance;
+        }
+        pinchDistance.current = distance;
+        for (const t of pinching) {
+          const info = lookTouches.current.get(t.identifier)!;
+          info.dragged = true;
+          info.lastX = t.clientX;
+          info.lastY = t.clientY;
+        }
+        return;
+      }
+      pinchDistance.current = null;
       for (const touch of Array.from(e.touches)) {
         const info = lookTouches.current.get(touch.identifier);
         if (!info) continue;
@@ -123,6 +144,7 @@ export function TouchControls() {
     };
 
     const onTouchEnd = (e: TouchEvent) => {
+      pinchDistance.current = null;
       for (const touch of Array.from(e.changedTouches)) {
         const info = lookTouches.current.get(touch.identifier);
         if (!info) continue;

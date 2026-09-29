@@ -14,4 +14,7 @@ export const touchInputState = {
    * FirstPersonControls (que lo resetea a 0 tras leerlo). */
   lookDeltaX: 0,
   lookDeltaY: 0,
+  /** Pellizco (pinch) acumulado desde el último frame: razón entre la
+   * distancia anterior y la actual de los dos dedos (1 = sin cambio). */
+  pinchScale: 1,
 };

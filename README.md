@@ -1,10 +1,31 @@
 # 🌸 Nuestro jardín de primavera
 
-Regalo interactivo de primavera: un pequeño jardín 3D explorable, hecho a
-medida. Empieza con una escena íntima y un mensaje, y al entrar revela un
-campo lleno de flores (rosas, tulipanes, girasoles, peonías, lavanda,
-orquídeas y más) que se pueden tocar para descubrir su significado, ver una
-presentación 3D y encontrar una flor especial escondida.
+Regalo interactivo de primavera: un jardín romántico japonés en 3D, para
+recorrer caminando al atardecer. Empieza con una escena íntima y un
+mensaje; al entrar, un camino de tierra y piedras atraviesa canteros de
+flores (rosas, tulipanes, girasoles, peonías, lavanda, orquídeas y más),
+pasa bajo un túnel de cerezos en flor, cruza un puente sobre el arroyo y
+un torii, y llega a un pequeño santuario iluminado al fondo del jardín,
+donde un círculo de flores guarda la flor especial.
+
+## El recorrido
+
+| Zona | Qué hay |
+|---|---|
+| Entrada | Dos cerezos enmarcan el camino, faroles de piedra, tulipanes y un prado de margaritas. |
+| Lazos este y oeste | Caminos secundarios de grava con sectores de una especie dominante (lavanda, girasoles, hibiscos, peonías, orquídeas, cosmos, dalias...), bancos y rincones de descanso. |
+| Túnel de sakura | Cerezos a ambos lados del camino principal cuyas copas se juntan por encima; pétalos cayendo y sobre el suelo. |
+| Arroyo y puente | Puente arqueado bermellón; orillas con piedras. |
+| Torii y plaza | El umbral del santuario; plaza empedrada con el círculo de flores y la flor especial en el centro, estanque con nenúfares y bancos. |
+| Santuario | Zócalo de piedra con escalinata, salón con shoji iluminados, techo curvo, shimenawa, campana y faroles de papel; luciérnagas y luz cálida. |
+
+Alrededor del valle: colinas con bosque, una línea de árboles brumosa,
+montañas lilas, nubes teñidas por el sol, aves lejanas y un cielo de
+atardecer (naranja en el horizonte, rosa y magenta, violeta arriba).
+
+El plano completo (caminos, canteros, agua, santuario, props y
+colisiones) está en `src/lib/gardenPlan.ts`, y el relieve en
+`src/lib/terrain.ts`.
 
 ## Stack elegido (y por qué)
 
@@ -37,8 +58,9 @@ src/
   config/giftConfig.ts    → 🔴 TEXTOS PERSONALES (ver abajo)
   data/flowers.ts         → 🔴 CATÁLOGO DE FLORES (visual + contenido)
   components/
-    garden/               → Escena 3D: cielo, suelo, pasto, nubes, mariposas,
-                             pétalos, campo de flores, cámara
+    garden/               → Escena 3D: cielo, paisaje, suelo, caminos, agua,
+                             santuario, sakuras, props, pasto, flores,
+                             partículas, luz/niebla, cámara
     flowers/               → Generador procedural de geometría + showcase 3D
     ui/                    → Pantallas e interfaz (intro, panel de flor,
                              flor especial, pantalla final, música)
@@ -126,6 +148,19 @@ el siguiente toque o tecla. Para usar otra música, reemplazá
 `public/audio/ambient.mp3` por un archivo con licencia adecuada (mismo
 nombre) o cambiá `music.src` en `src/config/giftConfig.ts`.
 
+## Controles
+
+- **Computadora**: click para caminar (el mouse queda capturado), WASD o
+  flechas para moverse, mouse para mirar, Shift para correr, rueda del
+  mouse (o `+`/`-`, `Q`/`E`) para acercar o alejar la vista.
+- **Celular**: joystick abajo a la izquierda para caminar, arrastrar el
+  resto de la pantalla para mirar, pellizcar con dos dedos para acercar o
+  alejar, tocar una flor para descubrirla.
+
+El jugador no puede salir del jardín ni atravesar el agua, los árboles,
+los faroles, los bancos ni el santuario (se desliza a lo largo de ellos);
+sube el puente y la escalinata siguiendo su altura.
+
 ## Rendimiento y calidad gráfica
 
 La app detecta la potencia aproximada del dispositivo (núcleos de CPU,
@@ -133,17 +168,20 @@ memoria, tipo de puntero, tamaño de pantalla) y elige automáticamente un
 nivel de calidad — **HIGH / MEDIUM / LOW** (`src/lib/quality.ts`) — que
 ajusta:
 
-- Cantidad de flores instanciadas (90 a 260)
-- Cantidad de mechones de pasto (800 a 4000)
-- Cantidad de pétalos flotando y mariposas
+- Cantidad de flores (150 a 520) y distancia hasta la que se dibujan
+- Cantidad de mechones de pasto (2200 a 9000)
+- Detalle de las copas de sakura, pétalos, luciérnagas, árboles lejanos y aves
 - Resolución de píxeles (DPR) máxima
 - Sombras activadas o no
 
 Además, `PerformanceMonitor` (de drei) baja la calidad en vivo si detecta
-FPS bajos mientras se usa. El pasto se anima con un shader en GPU (sin tocar
-React en cada frame) y las flores usan `InstancedMesh`, así que el campo
-completo se dibuja en un puñado de draw calls sin importar cuántas flores
-haya. Se respeta `prefers-reduced-motion` del sistema operativo, reduciendo
+FPS bajos mientras se usa. El pasto y las copas se animan con shaders en
+GPU, y todo lo repetido (flores, sakuras, faroles, bancos, piedras,
+pétalos, árboles lejanos) usa `InstancedMesh` con geometrías y materiales
+compartidos. Las flores se agrupan por sector (los lejanos ni se dibujan
+ni se recalculan), la sombra del sol acompaña a la cámara (mismo costo en
+cualquier punto del jardín) y no hay luces reales extra: el brillo de
+faroles y shoji es emisivo con halos y charcos de luz falsos. Se respeta `prefers-reduced-motion` del sistema operativo, reduciendo
 el viento, las animaciones de cámara y las partículas.
 
 ## Cómo publicarlo en GitHub Pages
